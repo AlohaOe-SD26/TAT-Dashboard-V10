@@ -1390,11 +1390,11 @@ async function pullMisCsvForPhase2() {
     }
     
     try {
-        const response = await api.sheet.pullCSV({
+        const data = await api.sheet.pullCSV({
                 mis_username: misUsername,
                 mis_password: misPassword
             });
-        const data = await response.json();
+
         
         if (data.success) {
             // Update global misData (same as Setup tab)

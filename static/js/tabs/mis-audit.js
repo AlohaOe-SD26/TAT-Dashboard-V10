@@ -2084,9 +2084,9 @@ async function fetchBlazeData(isAuto = false) {
     }
     
     try {
-        const response = await api.blaze.refresh();
+        const data = await api.blaze.refresh();
         if (!response.ok) throw new Error("Server Error");
-        const data = await response.json();
+
         
         if (data.success) {
             renderBlazeTable(data.data);
@@ -2123,9 +2123,9 @@ async function fetchBlazeData(isAuto = false) {
 // --- BACKGROUND UPDATE (THE POLL) ---
 async function loadTableFromCache() {
     try {
-        const response = await api.blaze.getCache();
+        const data = await api.blaze.getCache();
         if (!response.ok) return;
-        const data = await response.json();
+
         if (data.success) {
             console.log("Background update applied.");
             renderBlazeTable(data.data);
@@ -2948,11 +2948,11 @@ try {
     const misUsername = document.getElementById('mis-username').value;
     const misPassword = document.getElementById('mis-password').value;
 
-    const response = await api.blaze.updateTags({
+    const data = await api.blaze.updateTags({
             mis_username: misUsername,
             mis_password: misPassword
         });
-    const data = await response.json();
+
     
     if (data.success) {
         alert("[SUCCESS] " + data.message + "\n\nWatch the terminal console for progress.");
@@ -3647,12 +3647,12 @@ const originalStatus = statusText.innerHTML;
 statusText.innerHTML = '<span class="text-primary"><i class="bi bi-arrow-repeat spin"></i> Navigating to product page...</span>';
 
 try {
-const response = await api.blaze.inventory.navigateToProduct({
+const result = await api.blaze.inventory.navigateToProduct({
         store_name: currentStoreName,
         blaze_id: blazeId
     });
 
-const result = await response.json();
+
 
 if (result.success) {
     // Success message

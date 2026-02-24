@@ -486,7 +486,7 @@ async function initializeAllSystems(btnElement) {
     btn.textContent = 'Initializing...';
     
     try {
-        const response = await api.setup.initAll({
+        const data = await api.setup.initAll({
                 mis: {
                     username: document.getElementById('mis-username').value,
                     password: document.getElementById('mis-password').value
@@ -496,7 +496,6 @@ async function initializeAllSystems(btnElement) {
                     password: document.getElementById('blaze-password').value
                 }
             });
-        const data = await response.json();
         
         if (data.success) {
             document.getElementById('init-status').innerHTML = '<p class="alert alert-success">' + data.message + '</p>';
@@ -2596,8 +2595,8 @@ async function loadAuditStateFromServer() {
 const tabName = document.getElementById('mis-tab')?.value || '';
 
 try {
-const response = await apiGet(`/api/audit/load-state?tab=${encodeURIComponent(tabName)}`);
-const data = await response.json();
+const data = await apiGet(`/api/audit/load-state?tab=${encodeURIComponent(tabName)}`);
+
 
 if (data.success && data.state && data.state.results && data.state.results.length > 0) {
     const completedCount = data.state.results.length;

@@ -52,8 +52,41 @@ except ImportError:
 
 # ── Module-level constants (were globals in the monolith) ────────────────────
 BASE_DIR = Path(__file__).resolve().parent.parent.parent  # project root
-REPORTS_DIR = BASE_DIR / 'reports'
-GROUPS_FILE = BASE_DIR / 'promotion_groups.json' 
+REPORTS_DIR     = BASE_DIR / 'reports'
+GROUPS_FILE     = BASE_DIR / 'promotion_groups.json'
+BLAZE_TOKEN_FILE = BASE_DIR / 'blaze_token.json'
+
+
+def load_stored_token() -> Optional[str]:
+    """Reads the Blaze API token from blaze_token.json. Monolith: line 3258."""
+    try:
+        if BLAZE_TOKEN_FILE.exists():
+            with open(BLAZE_TOKEN_FILE, 'r') as f:
+                data = json.load(f)
+                token = data.get('token')
+                if token:
+                    return str(token).strip()
+    except Exception as e:
+        print(f"[WARN] Failed to load stored token: {e}")
+    return None
+
+
+def validate_token(token: str) -> bool:
+    """
+    Validate a Blaze API token by making a lightweight API call.
+    Returns True if valid (200 OK), False otherwise. Monolith: line 3280.
+    """
+    if not token:
+        return False
+    headers = {"Authorization": f"Token {token}"}
+    try:
+        r = requests.get(
+            "https://api.blaze.me/api/v1/mgmt/shops?start=0&limit=1",
+            headers=headers, timeout=5
+        )
+        return r.status_code == 200
+    except Exception:
+        return False
 # These will be updated when SessionManager is fully wired.
 
 

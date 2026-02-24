@@ -37,6 +37,10 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets']  # monolith line 2752
 
 
 # ── Tax rate defaults (defined in blaze_sync.py, mirrored here for google_sheets independence) ──
+# Project root constants (mirrored from monolith global scope)
+_PROJECT_ROOT   = Path(__file__).resolve().parent.parent.parent
+TAX_CONFIG_FILE = _PROJECT_ROOT / 'tax_config.json'
+
 DEFAULT_TAX_RATES = {
     'CA_base': 7.25,
     'CA_cannabis_excise': 15.0,
