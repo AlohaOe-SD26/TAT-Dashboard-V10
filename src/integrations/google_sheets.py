@@ -138,10 +138,46 @@ def authenticate_google_sheets() -> Optional[object]:
         return None
 
 
+def get_sheet_gid(spreadsheet_id: str, sheet_name: str) -> str | None:
+    """Get the numeric GID for a specific sheet tab. Monolith: line 4677."""
+    try:
+        service = session.get_sheets_service()
+        if not service:
+            return None
+        metadata = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+        for sheet in metadata.get('sheets', []):
+            if sheet['properties']['title'] == sheet_name:
+                return str(sheet['properties']['sheetId'])
+        return None
+    except Exception:
+        return None
+
+
 def open_google_sheet_in_browser(spreadsheet_id: str, sheet_name: str, row_number: int = None) -> bool:
-    """Open Google Sheet with native tab management."""
+    """
+    Open Google Sheet tab in the automation browser.
+    If the driver isn't initialized yet but the Launcher's Chrome is reachable
+    on port 9222, auto-attaches on the fly so Open Sheet works without clicking
+    Initialize first.
+    """
     try:
         driver = session.get_browser()
+
+        # Auto-attach to Launcher Chrome if driver not yet initialized
+        if not driver:
+            try:
+                from selenium import webdriver as wd
+                opts = wd.ChromeOptions()
+                opts.add_experimental_option("debuggerAddress", "127.0.0.1:9222")
+                driver = wd.Chrome(options=opts)
+                _ = driver.window_handles  # liveness check
+                session.set_browser(driver)
+                session.set_browser_ready(True)
+                print("[SHEETS] Auto-attached to Chrome via port 9222 for Open Sheet")
+            except Exception as attach_err:
+                print(f"[SHEETS] Browser not ready and auto-attach failed: {attach_err}")
+                return False
+
         if not driver:
             return False
         

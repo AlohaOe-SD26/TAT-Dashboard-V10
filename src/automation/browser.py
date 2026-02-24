@@ -324,33 +324,23 @@ def mis_login_silent(driver, username: str, password: str):
         raise Exception(f"Login failed: {str(e)}")
 
 
-def init_browser():
-    """Initialize unified browser using Standard Selenium with Download Prefs."""
+def init_browser(debug_port: int = 9222):
+    """
+    Attach Selenium to the existing Chrome window opened by the Launcher.
+    The Launcher starts Chrome with --remote-debugging-port=9222, so Selenium
+    connects to it via debuggerAddress instead of spawning a new window.
+    Falls back to launching a fresh Chrome process if attach fails.
+    """
     if not SELENIUM_AVAILABLE:
         return None
-    
+
+    # ── Primary: attach to the Launcher's Chrome window ─────────────────────
     try:
-        print("[INIT] Launching Standard Chrome for Token Sniffing & Downloads...")
-        
+        print(f"[INIT] Attaching to existing Chrome on port {debug_port}...")
         options = webdriver.ChromeOptions()
-        options.add_argument(f'user-data-dir={_get_chrome_profile_dir()}')
-        options.add_argument('profile-directory=Default')
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--start-maximized')
-        options.add_argument('--remote-allow-origins=*')
-        
-        # Hide automation indicators
-        options.add_argument('--disable-blink-features=AutomationControlled')
-        options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
-        options.add_experimental_option('useAutomationExtension', False)
-        
-        # Suppress console errors (QUOTA_EXCEEDED, google_apis warnings)
-        options.add_argument('--log-level=3')  # Only show fatal errors
-        options.add_argument('--silent')
-        options.add_argument('--disable-logging')
-        
-        # NEW: Configure Download Directory
+        options.add_experimental_option("debuggerAddress", f"127.0.0.1:{debug_port}")
+
+        # Download prefs (applied even in attach mode via CDP after connect)
         prefs = {
             "download.default_directory": str(MIS_REPORTS_DIR),
             "download.prompt_for_download": False,
@@ -358,19 +348,59 @@ def init_browser():
             "safebrowsing.enabled": True,
             "credentials_enable_service": False,
             "profile.password_manager_enabled": False,
-            # Suppress quota warnings
             "profile.default_content_setting_values.notifications": 2,
-            "profile.default_content_settings.popups": 0
+            "profile.default_content_settings.popups": 0,
+        }
+        options.add_experimental_option("prefs", prefs)
+
+        driver = webdriver.Chrome(options=options)
+
+        # Verify we're connected — window_handles throws if attach failed
+        _ = driver.window_handles
+        print(f"[INIT] ✓ Attached to existing Chrome — {len(driver.window_handles)} tab(s) open")
+        session.set_browser(driver)
+        session.set_browser_ready(True)
+        return driver
+
+    except Exception as attach_err:
+        print(f"[INIT] Could not attach to Chrome on port {debug_port}: {attach_err}")
+        print("[INIT] Falling back to launching a new Chrome process...")
+
+    # ── Fallback: spawn a fresh Chrome process ───────────────────────────────
+    try:
+        options = webdriver.ChromeOptions()
+        options.add_argument(f'user-data-dir={_get_chrome_profile_dir()}')
+        options.add_argument('profile-directory=Default')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--start-maximized')
+        options.add_argument('--remote-allow-origins=*')
+        options.add_argument('--disable-blink-features=AutomationControlled')
+        options.add_argument('--log-level=3')
+        options.add_argument('--silent')
+        options.add_argument('--disable-logging')
+        options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
+        options.add_experimental_option('useAutomationExtension', False)
+
+        prefs = {
+            "download.default_directory": str(MIS_REPORTS_DIR),
+            "download.prompt_for_download": False,
+            "download.directory_upgrade": True,
+            "safebrowsing.enabled": True,
+            "credentials_enable_service": False,
+            "profile.password_manager_enabled": False,
+            "profile.default_content_setting_values.notifications": 2,
+            "profile.default_content_settings.popups": 0,
         }
         options.add_experimental_option("prefs", prefs)
         options.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
-        
+
         driver = webdriver.Chrome(options=options)
-        
+        print("[INIT] ✓ New Chrome process launched (fallback)")
         session.set_browser(driver)
         session.set_browser_ready(True)
-        
         return driver
+
     except Exception as e:
         print(f"[ERROR] Browser init failed: {e}")
         traceback.print_exc()
@@ -381,21 +411,29 @@ def mis_login(driver, username: str, password: str, new_tab: bool = True) -> boo
     """MIS login automation."""
     try:
         target_url = "https://mis.theartisttree.com/daily-discount"
-        
+
+        # Snapshot existing tabs BEFORE the loop so we never navigate into them
+        protected_handles = set(driver.window_handles)
+        original_handle   = driver.current_window_handle
+
         mis_tab_found = False
         for handle in driver.window_handles:
             driver.switch_to.window(handle)
             if "daily-discount" in driver.current_url or "mis.theartisttree.com" in driver.current_url:
                 mis_tab_found = True
                 break
-        
+
+        # After the loop the driver may be on any tab — return to original first
+        try:
+            driver.switch_to.window(original_handle)
+        except Exception:
+            pass
+
         if not mis_tab_found:
             if new_tab:
-                # Create tab in background
-                original_handle = driver.current_window_handle
-                driver.execute_script(f"window.open('{target_url}', '_blank');")
-                time.sleep(1)
-                driver.switch_to.window(driver.window_handles[-1])
+                # Use new_window (more reliable than window.open — bypasses popup blocker)
+                driver.switch_to.new_window('tab')
+                driver.get(target_url)
             else:
                 driver.get(target_url)
         
@@ -646,15 +684,22 @@ def robust_login(email: str, password: str) -> str | None:
     try:
         print("[LOGIN] Checking for existing Blaze session...")
         original_handle = driver.current_window_handle
-        driver.execute_script(f"window.open('{target_url}', '_blank');")
-        time.sleep(1)
-        driver.switch_to.window(driver.window_handles[-1])
+
+        # Open Blaze in a dedicated NEW tab — never touch existing tabs
+        driver.switch_to.new_window('tab')
+        blaze_tab = driver.current_window_handle
+        driver.get(target_url)
         time.sleep(2)
 
         current_url = driver.current_url.lower()
 
         if "company-promotions" in current_url and "login" not in current_url:
             print("[LOGIN] Session active — skipping credentials.")
+            # Switch back to original tab so the app UI stays in focus
+            try:
+                driver.switch_to.window(original_handle)
+            except Exception:
+                pass
             return "LOGIN_SUCCESSFUL"
 
         print("[LOGIN] Session expired. Logging in with credentials...")
@@ -677,9 +722,15 @@ def robust_login(email: str, password: str) -> str | None:
         time.sleep(5)
         driver.get(target_url)
         time.sleep(8)
+
+        # Return focus to original tab (app or sheet)
+        try:
+            driver.switch_to.window(original_handle)
+        except Exception:
+            pass
+
         return "LOGIN_SUCCESSFUL"
 
     except Exception as e:
         print(f"[ERROR] robust_login failed: {e}")
         return None
-

@@ -317,6 +317,7 @@ def main() -> None:
                     '--no-default-browser-check',
                     '--disable-extensions',
                     '--window-size=1400,900',
+                    '--remote-debugging-port=9222',     # Allow Selenium to attach to this window
                     url,                               # URL as final positional arg
                 ])
             else:
