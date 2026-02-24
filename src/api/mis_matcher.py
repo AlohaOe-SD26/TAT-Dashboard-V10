@@ -171,11 +171,48 @@ def download_csv():
         traceback.print_exc()
         return str(e), 500
 
+_MIS_REPORTS_DIR = Path(__file__).resolve().parent.parent.parent / 'reports' / 'MIS_CSV_REPORTS'
+
 
 @bp.route('/api/mis/pull-csv', methods=['POST'])
 def pull_csv():
-    """Proxy to background pull — browser automation handled in mis_automation blueprint."""
-    return jsonify({'success': False, 'error': 'Use /api/mis/pull-csv via automation blueprint'}), 501
+    """
+    Pull MIS CSV in background without switching the user's visible tab.
+    Delegates to execute_in_background + pull_mis_csv_report_background.
+    Monolith: line 25375.
+    """
+    try:
+        from src.automation.browser import execute_in_background
+        from src.automation.mis_entry import pull_mis_csv_report_background
+
+        data         = request.get_json() or {}
+        gui_username = data.get('mis_username', '').strip()
+        gui_password = data.get('mis_password', '').strip()
+
+        _MIS_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
+        def pull_operation(driver):
+            return pull_mis_csv_report_background(driver)
+
+        result = execute_in_background('mis', pull_operation,
+                                       gui_username=gui_username,
+                                       gui_password=gui_password)
+
+        if result['success']:
+            success, path, filename = result['result']
+            if success:
+                session.set_mis_csv_filepath(path)
+                session.set_mis_csv_filename(filename)
+                print(f"[CSV-PULL] Stored in session: {filename}")
+                return jsonify({'success': True, 'path': path, 'filename': filename})
+            else:
+                return jsonify({'success': False, 'error': path})  # path = error msg on failure
+        else:
+            return jsonify({'success': False, 'error': result.get('error', 'Unknown error')})
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
 
 
 @bp.route('/api/mis/match', methods=['POST'])
