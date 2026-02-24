@@ -1,0 +1,1679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BLAZE MIS Audit Pro — TAT</title>
+    <!-- External CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+    <!-- App CSS (variables → main → components) -->
+    <link rel="stylesheet" href="/static/css/variables.css">
+    <link rel="stylesheet" href="/static/css/main.css">
+    <link rel="stylesheet" href="/static/css/components/preflight.css">
+    <link rel="stylesheet" href="/static/css/components/audit.css">
+    <link rel="stylesheet" href="/static/css/components/updown.css">
+</head>
+<body>
+<div class="container-main">
+<div class="header">
+    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+        <!-- Profile Selector (Google Chrome Colors) -->
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="display: flex; align-items: center; background: linear-gradient(135deg, #4285F4 0%, #34A853 50%, #FBBC05 75%, #EA4335 100%); padding: 2px; border-radius: 8px;">
+                <select id="profile-selector" class="form-select form-select-sm" 
+                        style="font-weight: 600; border: none; border-radius: 6px; min-width: 160px; cursor: pointer;"
+                        onchange="onProfileChange(this.value)">
+                    <option value="">Loading profiles...</option>
+                </select>
+            </div>
+            <button class="btn btn-sm" onclick="openRegisterModal()" 
+                    style="background: linear-gradient(135deg, #34A853 0%, #4285F4 100%); color: white; border: none; font-weight: 600; padding: 6px 12px;">
+                <i class="bi bi-plus-lg"></i> New
+            </button>
+        </div>
+        
+        <!-- Tax Calculator Button -->
+        <button id="calcDropdownBtn" class="btn btn-primary" onclick="toggleCalcModal()" 
+                style="font-size: 1.2em; padding: 10px 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: none;">
+             Tax Calculator
+        </button>
+    </div>
+</div>
+
+<!-- Restart Required Banner (hidden by default) -->
+<div id="restart-banner" style="display: none; background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%); color: white; padding: 12px 20px; text-align: center;">
+    <strong><i class="bi bi-arrow-repeat"></i> Profile Changed!</strong> 
+    <span id="restart-banner-text">Restart required to apply changes.</span>
+    <button class="btn btn-light btn-sm ms-3" onclick="restartApplication()" style="font-weight: 600;">
+        <i class="bi bi-power"></i> Restart Now
+    </button>
+    <button class="btn btn-outline-light btn-sm ms-2" onclick="hideRestartBanner()">
+        Later
+    </button>
+</div>
+
+<div class="main-nav" style="display: flex; background: #f8f9fa; border-bottom: 2px solid #dee2e6;">
+    <button class="main-nav-btn active" onclick="switchMainTab('setup', this)">&#x2699; Setup</button>
+    <button class="main-nav-btn" onclick="switchMainTab('mis', this)"> Audit</button>
+    <button class="main-nav-btn" onclick="switchMainTab('blaze', this)"> BLAZE</button>
+</div>
+
+<div id="mis-sub-nav" class="sub-nav" style="display:none; padding:10px 20px; background:#fff; border-bottom:1px solid #dee2e6;">
+    <button class="sub-nav-btn active" onclick="switchMISTab('csv-gen', this)">Creation Checklist</button>
+    <button class="sub-nav-btn" onclick="switchMISTab('id-match', this)">ID Matcher - Google Sheet > MIS CSV</button>
+    <button class="sub-nav-btn" onclick="switchMISTab('cleanup-audit', this)" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none;">&#x1F9F9; Cleanup Audit</button>
+    <button class="sub-nav-btn" onclick="switchMISTab('split-audit', this)" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; border: none;">&#x2702; Up-Down Planning</button>
+    <button class="sub-nav-btn" onclick="switchMISTab('comp-audit', this)" style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white; border: none;"><i class="bi bi-clipboard-check"></i> Comprehensive Audit</button>
+    <button class="sub-nav-btn" onclick="switchMISTab('conflict', this)">Conflict Audit - Active</button>
+    <button id="reinject-validation-btn" onclick="reinjectValidation()" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; border: none; padding: 8px 16px; border-radius: 4px; font-weight: bold; cursor: pointer; margin-left: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);" title="Re-inject validation code into MIS browser tab after page refresh">&#x1F504; Re-inject Validation</button>
+</div>
+
+<div class="content" style="padding:40px;">
+    <!-- SETUP TAB -->
+    <div id="setup-section" class="main-section active">
+        
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h2>Setup & Configuration</h2>
+            <div id="browser-ready-status" class="alert alert-secondary py-1 px-3 mb-0" style="font-size: 0.9em;">
+                <strong>Browser:</strong> <span id="browser-ready-text">Initializing...</span>
+            </div>
+        </div>
+
+        <div class="row g-3 mb-3">
+            
+            <div class="col-lg-7">
+                <div class="card h-100 shadow-sm">
+                    <div class="card-header bg-light fw-bold text-uppercase text-muted small d-flex justify-content-between align-items-center">
+                        <span><i class="bi bi-shield-lock"></i> System Credentials</span>
+                        <button class="btn btn-danger btn-sm py-0" style="font-size: 0.8em;" data-bs-toggle="modal" data-bs-target="#helpModal">
+                            <i class="bi bi-question-circle-fill"></i> HELP!
+                        </button>
+                    </div>
+                    <div class="card-body d-flex flex-column justify-content-center">
+                        
+                        <div class="d-flex align-items-center gap-3 mb-3 pb-3 border-bottom">
+                            <button class="btn btn-outline-primary btn-sm" onclick="authenticateGoogle()">Authenticate Google Sheets</button>
+                            <div id="auth-status" class="d-inline-block small"></div> 
+                        </div>
+
+                        <div class="row g-2 align-items-center mb-3">
+                            <div class="col-9">
+                                <div class="input-group">
+                                    <span class="input-group-text bg-white"><i class="bi bi-link-45deg"></i></span>
+                                    <input type="text" id="mis-sheet-url" class="form-control" placeholder="Google Sheet URL">
+                                </div>
+                            </div>
+                            <div class="col-3">
+                                <button class="btn btn-secondary w-100" onclick="loadMISSheetTabs(this)">Load Tabs</button>
+                            </div>
+                        </div>
+
+                        <div class="row g-2 align-items-center">
+                            <div class="col-md-6">
+                                <select id="mis-tab" class="form-select form-select-sm">
+                                    <option value="">-- No tabs loaded --</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6 d-flex align-items-center gap-2">
+                                <div class="form-check form-switch mb-0" style="white-space: nowrap;">
+                                    <input class="form-check-input" type="checkbox" id="mis-show-all-tabs" onchange="renderTabOptions()">
+                                    <label class="form-check-label small" for="mis-show-all-tabs">All Tabs</label>
+                                </div>
+                                <button class="btn btn-primary btn-sm flex-grow-1" onclick="initializeSheetPage(this)">Open Sheet</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-5">
+                <div class="card h-100 shadow-sm">
+                    <div class="card-header bg-light fw-bold text-uppercase text-muted small">
+                        <i class="bi bi-shield-lock"></i> System Credentials
+                    </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6 border-end">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <div class="d-flex align-items-center gap-2">
+                                <h6 class="text-muted fw-bold mb-0">MIS Config</h6>
+                                <button class="btn btn-outline-success py-0 px-2" style="font-size: 0.75em; height: 20px; line-height: 1;" onclick="pullMisCsv(this)">
+                                    <i class="bi bi-download"></i> MIS CSV
+                                </button>
+                                <button class="btn btn-outline-secondary py-0 px-2" style="font-size: 0.75em; height: 20px; line-height: 1;" onclick="openMisReportsFolder()" title="Open MIS Reports folder">
+                                    <i class="bi bi-folder2-open"></i>
+                                </button>
+                            </div>
+                            <div style="width: 50%;">
+                                <input type="file" id="mis-csv" accept=".csv" class="form-control form-control-sm" style="font-size: 0.8em;" onchange="handleMISCSV(this)">
+                            </div>
+                        </div>
+                        <div id="mis-csv-status" class="small text-success text-end mb-2" style="min-height: 1.2em; font-size: 0.75em; margin-top:-5px;"></div>
+                        <div id="mis-csv-folder-path" class="small text-muted text-end" style="font-size: 0.65em; margin-top:-10px; word-break: break-all;"></div>
+
+                        <div class="mb-2">
+                            <input type="text" id="mis-username" class="form-control form-control-sm mb-1" placeholder="MIS Username">
+                            <input type="password" id="mis-password" class="form-control form-control-sm" placeholder="MIS Password">
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <div class="d-flex align-items-center gap-2">
+                                <h6 class="text-muted fw-bold mb-0">Blaze Config</h6>
+                                <button class="btn btn-outline-warning py-0 px-2" 
+                                        style="font-size: 0.75em; height: 20px; line-height: 1; font-weight: bold; color: #d39e00; border-color: #ffc107;" 
+                                        onclick="runTierUpdate(this)"
+                                        title="Run automated tag updates for T1/T2/T3 Bag Days">
+                                    Update Tier Promos
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div id="blaze-sync-status" class="small mb-1" style="min-height:18px; font-size: 0.8em;"></div>
+
+                        <div class="mb-2 mt-1">
+                            <input type="text" id="blaze-email" class="form-control form-control-sm mb-1" placeholder="Blaze Email">
+                            <input type="password" id="blaze-password" class="form-control form-control-sm" placeholder="Blaze Password">
+                        </div>
+                        
+                        <!-- v12.24.0: Blaze Ecom Sync to Tymber -->
+                        <div class="mt-2 pt-2 border-top">
+                            <div class="d-flex align-items-center gap-2 mb-1">
+                                <h6 class="text-muted fw-bold mb-0" style="font-size: 0.75em;">Ecom Sync</h6>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <select id="ecom-sync-store" class="form-select form-select-sm" style="flex: 1; font-size: 0.8em;">
+                                    <option value="">Select Store...</option>
+                                    <option value="DAVIS">DAVIS</option>
+                                    <option value="DIXON">DIXON</option>
+                                    <option value="NAPA">NAPA</option>
+                                    <option value="SANTA ROSA">SANTA ROSA</option>
+                                    <option value="OAKLAND">OAKLAND</option>
+                                    <option value="SAN FRANCISCO">SAN FRANCISCO</option>
+                                    <option value="LOS ANGELES">LOS ANGELES</option>
+                                    <option value="SAN DIEGO">SAN DIEGO</option>
+                                    <option value="SAN JOSE">SAN JOSE</option>
+                                    <option value="SACRAMENTO">SACRAMENTO</option>
+                                    <option value="FRESNO">FRESNO</option>
+                                    <option value="LONG BEACH">LONG BEACH</option>
+                                </select>
+                                <button class="btn btn-outline-primary btn-sm" 
+                                        onclick="syncToTymber(this)"
+                                        title="Sync inventory to Tymber menu for selected store">
+                                    <i class="bi bi-cloud-upload"></i> SYNC TO TYMBER
+                                </button>
+                            </div>
+                            <div id="ecom-sync-status" class="small mt-1" style="min-height: 18px; font-size: 0.75em; color: #6c757d;">Ready</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        </div>  <!-- Close col-lg-5 -->
+    </div>  <!-- Close row g-3 mb-3 -->
+
+
+        <div class="d-grid gap-2">
+            <button class="btn btn-success btn-lg fw-bold" onclick="initializeAllSystems(this)">
+                <i class="bi bi-play-circle-fill"></i> Initialize Browser & Login to Both Systems
+            </button>
+            <div id="init-status" class="text-center mt-2"></div>
+        </div>
+
+        <!-- TAX RATES CONFIGURATION -->
+        <div class="row g-3 mt-3">
+            <div class="col-12">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-light fw-bold text-uppercase text-muted small">
+                        <i class="bi bi-calculator"></i> &#x1F5A9; Tax Rates Configuration
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted small mb-3">
+                            Edit tax rates below. Default values are hardcoded. Changes are saved to <code>tax_config.json</code>.
+                        </p>
+                        <div class="row g-2" id="tax-rates-container">
+                            <!-- Tax rate inputs will be populated by JavaScript -->
+                        </div>
+                        <div class="d-flex justify-content-end gap-2 mt-3">
+                            <button class="btn btn-secondary" onclick="loadTaxRatesForEdit()">
+                                <i class="bi bi-arrow-clockwise"></i> Reload
+                            </button>
+                            <button class="btn btn-primary" onclick="saveTaxRates()">
+                                <i class="bi bi-save"></i> Save Tax Rates
+                            </button>
+                        </div>
+                        <div id="tax-save-status" class="mt-2 text-center small"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="setup-summary"></div>
+    </div>
+    
+    <!-- MIS TAB -->
+    <div id="mis-section" class="main-section">
+        
+        <!-- Creation Checklist -->
+        <div id="csv-gen-section" class="sub-section active">
+            <h2>Creation Checklist</h2>
+            <button class="btn" onclick="generateCSV()">Generate CSV</button>
+            <div id="gen-results">
+                <!-- Deal type sub-tabs will be injected here by displayGeneratedCSV() -->
+            </div>
+        </div>
+        
+        <!-- ID Matcher -->
+        <div id="id-match-section" class="sub-section">
+            <h2>ID Matcher</h2>
+            
+            <!-- v12.1: Subtabs for ID Matcher and MAudit -->
+            <ul class="nav nav-tabs mb-3" id="idMatcherSubTabs">
+                <li class="nav-item">
+                    <a class="nav-link active" href="#" onclick="switchIdMatcherSubTab('matcher', this); return false;">ID Matcher</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="#" onclick="switchIdMatcherSubTab('maudit', this); return false;">Google > MAudit</a>
+                </li>
+            </ul>
+            
+            <!-- ID Matcher Subtab Content -->
+            <div id="id-matcher-subtab-matcher" class="id-matcher-subtab-content">
+                <div class="focus-panel" id="matcher-focus-panel">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="matcher-focus-enable" onchange="toggleFocus('matcher')">
+                        <label class="form-check-label fw-bold" for="matcher-focus-enable"> Enable Focus</label>
+                    </div>
+                    <div id="matcher-focus-controls" style="display:flex; gap:15px; opacity:0.5; pointer-events:none;">
+                        <input type="date" id="matcher-focus-date" class="form-control" style="width:auto;">
+                        <div class="form-check form-switch pt-2">
+                            <input class="form-check-input" type="checkbox" id="matcher-focus-expand">
+                            <label class="form-check-label" for="matcher-focus-expand"> Expand to Month</label>
+                        </div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 10px; margin-left: auto;">
+                        <button class="btn" onclick="runMatcher()">Run Matcher</button>
+                        <div id="apply-btns-container" style="display:none;">
+                            <button id="apply-mis-btn" class="btn btn-success btn-sm" onclick="applyMatches('mis')" title="Apply only MIS IDs to Google Sheet">
+                                <i class="bi bi-file-earmark-plus"></i> Apply MIS IDs
+                            </button>
+                            <button id="apply-blaze-btn" class="btn btn-primary btn-sm" onclick="applyMatches('blaze')" title="Apply only Blaze Titles to Google Sheet">
+                                <i class="bi bi-lightning-charge"></i> Apply Blaze Titles
+                            </button>
+                            <button id="apply-all-btn" class="btn btn-warning btn-sm" onclick="applyMatches('all')" title="Apply both MIS IDs and Blaze Titles">
+                                <i class="bi bi-check2-all"></i> Apply All
+                            </button>
+                        </div>
+                        <span id="matcher-status" style="color: #666; font-style: italic; font-size: 0.9em;"></span>
+                    </div>
+                </div>
+                <div id="match-results">
+                    <!-- Deal type sub-tabs will be injected here by displayMatchResults() -->
+                </div>
+            </div>
+            
+            <!-- MAudit Subtab Content (v12.1) -->
+            <div id="id-matcher-subtab-maudit" class="id-matcher-subtab-content" style="display:none;">
+                <div class="alert alert-info mb-3">
+                    <i class="bi bi-info-circle"></i> 
+                    <strong>Google > MAudit:</strong> Verify Google Sheet deals against MIS CSV data.
+                    <br><small class="text-muted">Compares: Discount, Vendor %, Start/End Dates, Brand, Locations. Groups by verification status.</small>
+                </div>
+                
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div>
+                        <button class="btn btn-primary" onclick="runMAudit()">
+                            <i class="bi bi-check2-circle"></i> Run MAudit Verification
+                        </button>
+                        <span id="maudit-status" class="ms-2" style="color: #666; font-style: italic;"></span>
+                    </div>
+                </div>
+                
+                <div id="maudit-results">
+                    <!-- MAudit results will be injected here by renderMAuditResults() -->
+                    <p class="text-muted">Click "Run MAudit Verification" to compare Google Sheet against MIS CSV.</p>
+                </div>
+            </div>
+        </div>
+        <div id="conflict-section" class="sub-section">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h2>[!] ⚠️⚠️ Conflict Audit</h2>
+                <div>
+                    <span id="conflict-stats" class="badge bg-secondary fs-6 me-2">Ready to Scan</span>
+                    <button class="btn btn-warning fw-bold" onclick="runConflictAudit()">
+                        <i class="bi bi-radioactive"></i> Run Conflict Check
+                    </button>
+                </div>
+            </div>
+            
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle"></i> 
+                Scans <strong>Active Deals</strong> (running today) in MIS .CSV for duplicates/potential conflicts based on 
+                <strong>Brand and Weekday</strong>, ignores store location for now.
+            </div>
+
+            <div id="conflict-results">
+                <!-- Conflict results will be injected here by renderConflictResults() -->
+            </div>
+        </div> 
+
+        <!-- ============================================ -->
+        <!-- CLEANUP AUDIT - Find stale MIS entries -->
+        <!-- ============================================ -->
+        <div id="cleanup-audit-section" class="sub-section">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h2 style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">
+                    &#x1F9F9; Cleanup Audit
+                </h2>
+                <div>
+                    <span id="cleanup-audit-stats" class="badge bg-secondary fs-6 me-2">Ready</span>
+                    <button class="btn btn-primary fw-bold" onclick="runCleanupAudit()">
+                        <i class="bi bi-search"></i> Run Cleanup Audit
+                    </button>
+                </div>
+            </div>
+
+            <div class="alert alert-info mb-3">
+                <strong><i class="bi bi-lightbulb"></i> Purpose:</strong> Find active MIS entries that should be turned off.
+                <br><small class="text-muted">
+                    Identifies MIS entries that are <strong>active</strong> (no end date or end date in future) 
+                    but are <strong>NOT</strong> found in the Google Sheet. These are potential stragglers from old deals.
+                </small>
+            </div>
+
+            <!-- Detection Method Sub-Tabs -->
+            <ul class="nav nav-tabs mb-3" id="cleanupMethodTabs">
+                <li class="nav-item">
+                    <a class="nav-link active" href="#" onclick="switchCleanupMethod('full-match', this); return false;">
+                        <i class="bi bi-check2-all"></i> Full Field Match
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="#" onclick="switchCleanupMethod('id-only', this); return false;">
+                        <i class="bi bi-hash"></i> MIS ID Only
+                    </a>
+                </li>
+            </ul>
+
+            <!-- Method 1: Full Field Match -->
+            <div id="cleanup-method-full-match" class="cleanup-method-content" style="display:block;">
+                <div class="alert alert-secondary mb-3">
+                    <strong>Full Field Match:</strong> Finds active MIS entries where Brand + Weekday + Discount + Vendor% + Locations 
+                    do NOT match any row in the Google Sheet.
+                </div>
+                
+                <!-- Section Sub-Tabs (Weekly/Monthly/Sale) -->
+                <ul class="nav nav-pills mb-3" id="cleanupFullMatchSectionTabs">
+                    <li class="nav-item">
+                        <a class="nav-link active" href="#" onclick="filterCleanupSection('full-match', 'all', this); return false;">All</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="filterCleanupSection('full-match', 'weekly', this); return false;">Weekly</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="filterCleanupSection('full-match', 'monthly', this); return false;">Monthly</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="filterCleanupSection('full-match', 'sale', this); return false;">Sale</a>
+                    </li>
+                </ul>
+                
+                <div id="cleanup-full-match-results">
+                    <p class="text-muted">Click "Run Cleanup Audit" to scan for stale MIS entries.</p>
+                </div>
+            </div>
+
+            <!-- Method 2: MIS ID Only -->
+            <div id="cleanup-method-id-only" class="cleanup-method-content" style="display:none;">
+                <div class="alert alert-secondary mb-3">
+                    <strong>MIS ID Only:</strong> Finds active MIS entries whose ID does NOT appear anywhere 
+                    in the Google Sheet's MIS ID column.
+                </div>
+                
+                <!-- Section Sub-Tabs (Weekly/Monthly/Sale) -->
+                <ul class="nav nav-pills mb-3" id="cleanupIdOnlySectionTabs">
+                    <li class="nav-item">
+                        <a class="nav-link active" href="#" onclick="filterCleanupSection('id-only', 'all', this); return false;">All</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="filterCleanupSection('id-only', 'weekly', this); return false;">Weekly</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="filterCleanupSection('id-only', 'monthly', this); return false;">Monthly</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="filterCleanupSection('id-only', 'sale', this); return false;">Sale</a>
+                    </li>
+                </ul>
+                
+                <div id="cleanup-id-only-results">
+                    <p class="text-muted">Click "Run Cleanup Audit" to scan for stale MIS entries.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============================================ -->
+        <!-- UP-DOWN PLANNING (formerly Split Audit) -->
+        <!-- ============================================ -->
+        <div id="split-audit-section" class="sub-section">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h2 style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">
+                    &#x2702; Up-Down Planning
+                </h2>
+                <span id="split-audit-stats" class="badge bg-secondary fs-6">Ready</span>
+            </div>
+
+            <div class="alert alert-info mb-3">
+                <strong><i class="bi bi-lightbulb"></i> Purpose:</strong> Manage Weekly Deal splits when interrupted by Sale/Monthly deals.
+                <br><small class="text-muted">
+                    <strong>Dominance Hierarchy:</strong> Sale/Monthly (Tier 1) > Weekly (Tier 2). 
+                    Weekly deals must be <em>split</em> in MIS to avoid overlap on conflict dates.
+                </small>
+            </div>
+
+            <!-- Phase Sub-Tabs -->
+            <div class="btn-group mb-3" role="group" style="width: 100%;">
+                <button type="button" class="btn btn-outline-primary active split-phase-btn" 
+                        onclick="switchSplitPhase('planning', this)" style="flex: 1;">
+                    <i class="bi bi-list-task"></i> Phase 1: Planning
+                </button>
+                <button type="button" class="btn btn-outline-success split-phase-btn" 
+                        onclick="switchSplitPhase('final-check', this)" style="flex: 1;">
+                    <i class="bi bi-check2-all"></i> Phase 2: Final Verification
+                </button>
+            </div>
+
+            <!-- Phase 1: Planning -->
+            <div id="split-phase-planning" class="split-phase-content active">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-primary text-white">
+                        <strong><i class="bi bi-list-task"></i> Phase 1: Planning (Google Sheet Only)</strong>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted mb-3">
+                            <strong>Goal:</strong> Analyze your Google Sheet and generate a <em>To-Do List</em> for MIS entries.
+                            <br>If a Weekly deal conflicts with a Sale/Monthly deal on specific dates, you'll see exactly how to split it.
+                        </p>
+                        
+                        <div class="text-center mb-4">
+                            <button class="btn btn-primary btn-lg fw-bold shadow" onclick="runSplitPlanningAudit()" style="padding: 15px 40px;">
+                                <i class="bi bi-calendar-check"></i> Generate Split Plan
+                            </button>
+                        </div>
+
+                        <div id="split-planning-results">
+                            <!-- Planning results will be injected here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Phase 2: Final Verification -->
+            <div id="split-phase-final-check" class="split-phase-content" style="display: none;">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-success text-white">
+                        <strong><i class="bi bi-check2-all"></i> Phase 2: Final Verification (Sheet + MIS CSV)</strong>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted mb-3">
+                            <strong>Goal:</strong> Verify that deals created in MIS match the expected entry plans from Phase 1.
+                            <br>Compares MIS IDs logged in Google Sheet against actual CSV data.
+                        </p>
+
+                        <div class="alert alert-success">
+                            <i class="bi bi-info-circle"></i> 
+                            <strong>Prerequisites:</strong>
+                            <ul class="mb-0 mt-2">
+                                <li>Complete Phase 1 to generate split plans</li>
+                                <li>Create all deals in MIS (Part 1, GAP, PATCH, Part 2)</li>
+                                <li>Log MIS IDs in Google Sheet using Apply buttons (with prefixes: "Gap: ", "Patch: ")</li>
+                                <li>Pull the latest MIS CSV after creating all deals</li>
+                            </ul>
+                        </div>
+                        
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <div class="card border-secondary">
+                                    <div class="card-body text-center">
+                                        <div class="mb-2 text-muted small">MIS CSV Status</div>
+                                        <div id="phase2-csv-status" class="fw-bold text-secondary">
+                                            <i class="bi bi-file-earmark-x"></i> No CSV Loaded
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="card border-secondary">
+                                    <div class="card-body text-center">
+                                        <button class="btn btn-outline-primary btn-sm" onclick="pullMisCsvForPhase2()">
+                                            <i class="bi bi-cloud-download"></i> Pull MIS CSV
+                                        </button>
+                                        <span class="text-muted small ms-2">(Updates global CSV)</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="text-center mb-4">
+                            <button class="btn btn-success btn-lg fw-bold shadow" onclick="runPhase2FinalCheck()" style="padding: 15px 40px;">
+                                <i class="bi bi-shield-check"></i> Run Final Verification
+                            </button>
+                        </div>
+
+                        <div id="split-final-check-results">
+                            <!-- Final verification results will be injected here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============================================ -->
+        <!-- v12.25.0: COMPREHENSIVE AUDIT -->
+        <!-- ============================================ -->
+        <div id="comp-audit-section" class="sub-section">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h2 style="color: #1a1a1a; font-weight: bold;">
+                    <i class="bi bi-clipboard-check" style="color: #11998e;"></i> Comprehensive Audit
+                </h2>
+                <span id="comp-audit-stats" class="badge bg-secondary fs-6">Ready</span>
+            </div>
+
+            <div class="alert alert-info mb-3">
+                <i class="bi bi-clipboard-check"></i> 
+                <strong>Comprehensive Audit:</strong> Systematic verification of Google Sheet deals against MIS CSV and Blaze discounts.
+                <br><small class="text-muted">Sequential audit workflow with progress tracking, notes, and export capability.</small>
+            </div>
+            
+            <!-- Audit Controls -->
+            <div class="card mb-3 shadow-sm">
+                <div class="card-header bg-light">
+                    <strong><i class="bi bi-sliders"></i> Audit Configuration</strong>
+                </div>
+                <div class="card-body">
+                    <!-- Audit Mode Toggle -->
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">Audit Mode</label>
+                            <div class="btn-group w-100" role="group">
+                                <input type="radio" class="btn-check" name="auditMode" id="auditModeFull" value="full" checked onchange="toggleAuditMode()">
+                                <label class="btn btn-outline-primary" for="auditModeFull">Full Audit</label>
+                                <input type="radio" class="btn-check" name="auditMode" id="auditModeCustom" value="custom" onchange="toggleAuditMode()">
+                                <label class="btn btn-outline-primary" for="auditModeCustom">Custom Audit</label>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Custom Audit Options (hidden by default) -->
+                    <div id="customAuditOptions" style="display:none;">
+                        <hr>
+                        <div class="row mb-3">
+                            <!-- Section Filter -->
+                            <div class="col-md-4">
+                                <label class="form-label fw-bold">Sections</label>
+                                <div class="d-flex gap-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="auditSectionWeekly" value="weekly" checked>
+                                        <label class="form-check-label" for="auditSectionWeekly">Weekly</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="auditSectionMonthly" value="monthly" checked>
+                                        <label class="form-check-label" for="auditSectionMonthly">Monthly</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="auditSectionSale" value="sale" checked>
+                                        <label class="form-check-label" for="auditSectionSale">Sale</label>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Weekday Filter -->
+                            <div class="col-md-5">
+                                <label class="form-label fw-bold">Weekdays</label>
+                                <div class="d-flex gap-2 flex-wrap">
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input audit-weekday-check" type="checkbox" id="auditWeekMon" value="mon">
+                                        <label class="form-check-label" for="auditWeekMon">Mon</label>
+                                    </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input audit-weekday-check" type="checkbox" id="auditWeekTue" value="tue">
+                                        <label class="form-check-label" for="auditWeekTue">Tue</label>
+                                    </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input audit-weekday-check" type="checkbox" id="auditWeekWed" value="wed">
+                                        <label class="form-check-label" for="auditWeekWed">Wed</label>
+                                    </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input audit-weekday-check" type="checkbox" id="auditWeekThu" value="thu">
+                                        <label class="form-check-label" for="auditWeekThu">Thu</label>
+                                    </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input audit-weekday-check" type="checkbox" id="auditWeekFri" value="fri">
+                                        <label class="form-check-label" for="auditWeekFri">Fri</label>
+                                    </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input audit-weekday-check" type="checkbox" id="auditWeekSat" value="sat">
+                                        <label class="form-check-label" for="auditWeekSat">Sat</label>
+                                    </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input audit-weekday-check" type="checkbox" id="auditWeekSun" value="sun">
+                                        <label class="form-check-label" for="auditWeekSun">Sun</label>
+                                    </div>
+                                </div>
+                                <button class="btn btn-outline-secondary btn-sm mt-2" onclick="toggleWeekendAudit()">
+                                    <i class="bi bi-calendar-weekend"></i> Weekend Toggle
+                                </button>
+                            </div>
+                            
+                            <!-- Date Picker -->
+                            <div class="col-md-3">
+                                <label class="form-label fw-bold">Specific Date</label>
+                                <input type="date" id="auditSpecificDate" class="form-control">
+                                <small class="text-muted">Filter deals active on this date</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Load/Start Buttons -->
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div class="d-flex gap-2">
+                    <button class="btn btn-primary" onclick="loadAuditDeals()">
+                        <i class="bi bi-arrow-repeat"></i> Load Deals
+                    </button>
+                    <button id="startAuditBtn" class="btn btn-success" onclick="startSequentialAudit()" disabled>
+                        <i class="bi bi-play-fill"></i> Start Audit
+                    </button>
+                </div>
+                <div class="d-flex gap-2 align-items-center">
+                    <span id="auditDealCount" class="badge bg-secondary fs-6">No deals loaded</span>
+                    <button id="exportAuditBtn" class="btn btn-outline-info btn-sm" onclick="exportAuditReport()" disabled>
+                        <i class="bi bi-download"></i> Export Report
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Audit Overview/Deal Table -->
+            <div id="auditOverviewContainer" style="display:none;">
+                <!-- Summary Counts -->
+                <div class="row mb-3" id="auditSummaryCounts">
+                    <!-- Will be populated by JS -->
+                </div>
+                
+                <!-- Scrollable Deal Table -->
+                <div class="scrollable-table-container" style="max-height:600px; overflow-y:auto;">
+                    <table class="table table-sm table-hover table-bordered" id="auditDealsTable" style="font-size:0.85em;">
+                        <thead class="sticky-top" style="background:#e9ecef; color:#212529;">
+                            <tr>
+                                <th>Row</th>
+                                <th>Brand</th>
+                                <th style="color:#6c757d;">Linked</th>
+                                <th>Weekday</th>
+                                <th>Notes</th>
+                                <th>Deal Info</th>
+                                <th>Discount</th>
+                                <th>Vendor %</th>
+                                <th>Locations</th>
+                                <th>Categories</th>
+                                <th>Status</th>
+                                <th>MIS ID</th>
+                                <th>Audit Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="auditDealsTableBody">
+                            <!-- Populated by loadAuditDeals() -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <!-- Initial placeholder -->
+            <div id="auditPlaceholder">
+                <div class="text-center p-4 border rounded bg-light">
+                    <i class="bi bi-clipboard-check" style="font-size: 3em; color: #6c757d;"></i>
+                    <h5 class="mt-3">Ready to Audit</h5>
+                    <p class="text-muted mb-0">Click "Load Deals" to populate the audit table from ID Matcher data.</p>
+                    <small class="text-muted">Make sure you've run the ID Matcher first to load deal data.</small>
+                </div>
+            </div>
+        </div>
+
+    </div> <div id="blaze-section" class="main-section">
+        
+        <div class="mb-3" style="border-bottom: 1px solid #dee2e6; padding-bottom: 10px;">
+            <div class="btn-group">
+                <button class="btn btn-outline-primary active" id="btn-blaze-promo" onclick="switchBlazeTab('promo')">
+                    &#x1F5A9; Company Promotions
+                </button>
+                <button class="btn btn-outline-primary" id="btn-blaze-inv" onclick="switchBlazeTab('inv')">
+                     Inventory Report
+                </button>
+            </div>
+        </div>
+
+        <div id="blaze-promo-content">
+            <div class="card shadow-sm">
+                <div class="card-header bg-white">
+                    <div class="d-flex justify-content-between align-items-start gap-3">
+                        <div style="flex: 1; min-width: 250px;">
+                            <div class="fw-bold mb-2"><i class="bi bi-table"></i> Live Promotions Data</div>
+                            <div class="input-group input-group-sm mb-2">
+                                <span class="input-group-text bg-light"><i class="bi bi-search"></i></span>
+                                <input type="text" id="blazeNameSearch" class="form-control" placeholder="Filter by Name..." onkeyup="handlePrimaryInput()">
+                            </div>
+                            <div class="input-group input-group-sm" id="subSearchContainer" style="display: none;">
+                                <span class="input-group-text bg-light"><i class="bi bi-filter"></i></span>
+                                <input type="text" id="blazeSubSearch" class="form-control" placeholder="Search within results..." onkeyup="applyBlazeFilters()">
+                            </div>
+                        </div>
+                        
+                        <div style="font-size: 0.85em; display: flex; gap: 15px; flex: 1;">
+                            <div id="filteredStatsGroup" style="text-align: right; border-right: 1px solid #dee2e6; padding-right: 15px; display: none;">
+                                <div class="text-muted small fw-bold text-uppercase" style="font-size: 0.75em;">Filtered Results</div>
+                                <span class="badge bg-primary" id="filteredCount">0 Visible</span>
+                                <span class="badge bg-white text-success border border-success" id="filteredActive">0 Active</span>
+                                <span class="badge bg-white text-danger border border-danger" id="filteredInactive">0 Inactive</span>
+                                <span class="badge bg-danger" id="filteredZombie" title="Active deals past end date"> 0 Zombie</span>
+                            </div>
+
+                            <div style="text-align: right;">
+                                <div class="text-muted small fw-bold text-uppercase" style="font-size: 0.75em;">Total Count</div>
+                                <span class="badge bg-secondary" id="totalCount">0 Total Promotions</span>
+                                <span class="badge bg-white text-success border border-success" id="totalActive">0 Active</span>
+                                <span class="badge bg-white text-danger border border-danger" id="totalInactive">0 Inactive</span>
+                                <span class="badge bg-danger" id="totalZombie" title="Active deals past end date"> 0 Zombie</span>
+                            </div>
+                        </div>
+                        
+                        <div style="min-width: 200px;">
+                            <div class="d-grid gap-2">
+                                <button onclick="fetchBlazeData()" class="btn btn-primary btn-sm fw-bold">
+                                    <i class="bi bi-arrow-clockwise"></i> Refresh / Sync Data
+                                </button>
+                                <button onclick="exportData('full')" class="btn btn-primary btn-sm">
+                                    <i class="bi bi-database"></i> Full Report
+                                </button>
+                                <button id="downloadFilteredBtn" onclick="exportFilteredData()" class="btn btn-info btn-sm">
+                                    <i class="bi bi-funnel"></i> Download Filtered
+                                </button>
+                            </div>
+                            <div class="mt-2 d-flex gap-2 align-items-center">
+                                <div class="zombie-toggle-container">
+                                    <span class="zombie-toggle-label"> Zombie</span>
+                                    <label class="zombie-toggle-switch">
+                                        <input type="checkbox" id="zombieCleanupToggle" onchange="toggleZombieCleanupMode()">
+                                        <span class="zombie-toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <button id="zombieCleanupBtn" onclick="startZombieCleanup()" class="btn btn-danger btn-sm" style="display: none;">
+                                     Zombie Cleanup
+                                </button>
+                                <div class="draft-toggle-container">
+                                    <span class="draft-toggle-label"> Draft</span>
+                                    <label class="draft-toggle-switch">
+                                        <input type="checkbox" id="draftSelectionToggle" onchange="toggleDraftSelectionMode()">
+                                        <span class="draft-toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <button id="draftSelectedBtn" onclick="startDraftSelected()" class="btn btn-warning btn-sm" style="display: none;">
+                                     Draft Selected (<span id="draftSelectedCount">0</span>)
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <div id="promotionsTableWrapper">
+                        <table id="promotionsTable" class="table table-striped table-hover w-100 mb-0" style="font-size: 0.8rem;">
+                            <thead>
+                                <tr>
+                                    <th>Detail</th>
+                                    <th>ID</th>
+                                    <th>Name</th>
+                                    <th>Status</th>
+                                    <th>Auto/Manual</th>
+                                    <th>Locations</th>
+                                    <th>Groups (Buy)</th>
+                                    <th>Groups (Get)</th>
+                                    <th>Type</th>
+                                    <th>Value</th>
+                                    <th>Start</th>
+                                    <th>End</th>
+                                    <th>Days Until End</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div> 
+                </div> 
+            </div> 
+        </div>
+
+        <div id="blaze-inv-content" style="display:none;">
+            <!-- Control Bar -->
+            <div class="card shadow-sm mb-3">
+                <div class="card-body py-2">
+                    <div class="row g-2">
+                        <!-- Left Column: Fetch & Load (Stacked) -->
+                        <div class="col-md-4">
+                            <!-- Fetch Fresh Section -->
+                            <div class="mb-2">
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text fw-bold"> Fetch Fresh</span>
+                                    <select id="invStoreSelect" class="form-select">
+                                        <option value="">-- Select Store --</option>
+                                        <option value="The Artist Tree - West Hollywood">West Hollywood</option>
+                                        <option value="The Artist Tree - Beverly Hills">Beverly Hills</option>
+                                        <option value="The Artist Tree - Koreatown">Koreatown</option>
+                                        <option value="The Artist Tree - Riverside">Riverside</option>
+                                        <option value="The Artist Tree - Fresno">Fresno (Palm)</option>
+                                        <option value="The Artist Tree - Fresno Shaw">Fresno Shaw</option>
+                                        <option value="The Artist Tree - Oxnard">Oxnard</option>
+                                        <option value="The Artist Tree - El Sobrante">El Sobrante</option>
+                                        <option value="The Artist Tree - Laguna Woods">Laguna Woods</option>
+                                        <option value="The Artist Tree - Hawthorne">Hawthorne</option>
+                                        <option value="The Artist Tree - Dixon">Dixon</option>
+                                        <option value="The Artist Tree - Davis">Davis</option>
+                                    </select>
+                                    <button id="btnFetchFresh" class="btn btn-primary btn-sm fw-bold" onclick="fetchInventoryData()">
+                                        <i class="bi bi-cloud-download"></i> Fetch
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <!-- Load Saved Section -->
+                            <div>
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text fw-bold"> Load Saved</span>
+                                    <select id="savedReportsDropdown" class="form-select">
+                                        <option value="">-- Select Report --</option>
+                                    </select>
+                                    <button class="btn btn-info btn-sm fw-bold" onclick="loadSavedReport()">
+                                        <i class="bi bi-folder-open"></i> Load
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Middle Column: Debug Log -->
+                        <div class="col-md-6">
+                            <div class="debug-log-panel" id="debugLogPanel" style="display: none;">
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <span class="fw-bold text-primary small"> FETCH DEBUG LOG</span>
+                                    <span class="small text-muted">
+                                        <i class="bi bi-clock"></i> <span id="debugTimer">00:00</span> | 
+                                        ETA: <span id="debugETA">--</span>
+                                    </span>
+                                </div>
+                                <div class="progress mb-1" style="height: 8px;">
+                                    <div id="debugProgress" class="progress-bar progress-bar-striped progress-bar-animated" 
+                                         role="progressbar" style="width: 0%"></div>
+                                </div>
+                                <div id="debugMessages" class="debug-messages small">
+                                    <!-- Log messages appear here -->
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Right Column: Export Button -->
+                        <div class="col-md-2 d-flex align-items-center justify-content-end">
+                            <button class="btn btn-success btn-sm fw-bold" onclick="openInventoryExportModal()">
+                                <i class="bi bi-file-earmark-excel"></i> Export
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            
+
+            <!-- Status Bar (shows current data info) -->
+            <div class="card shadow-sm mb-2" id="inventoryStatusCard" style="display: none;">
+                <div class="card-body py-1 bg-light">
+                    <span id="inventoryStatusText" class="text-muted small"></span>
+                </div>
+            </div>
+
+            <!-- Filter Bar -->
+            <div class="card shadow-sm mb-2">
+                <div class="card-body py-2 bg-light">
+                    <div class="row g-2">
+                        <!-- First Row: Search Bars -->
+                        <div class="col-md-3">
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text"></span>
+                                <input type="text" id="invSearchName" class="form-control form-control-sm" 
+                                       placeholder="Search Name (Primary)..." 
+                                       onkeyup="debouncedInventorySearch()">
+                                <button class="btn btn-outline-secondary btn-sm" onclick="clearSearchField('invSearchName')" title="Clear">
+                                    <i class="bi bi-x"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text"></span>
+                                <input type="text" id="invSearchName2" class="form-control form-control-sm" 
+                                       placeholder="Search Name (Secondary)..." 
+                                       onkeyup="debouncedInventorySearch()">
+                                <button class="btn btn-outline-secondary btn-sm" onclick="clearSearchField('invSearchName2')" title="Clear">
+                                    <i class="bi bi-x"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <!-- Second Row: Dropdowns & Checkbox -->
+                        <div class="col-md-2">
+                            <select id="invFilterBrand" class="form-select form-select-sm" onchange="applyInventoryFilters()">
+                                <option value="">All Brands</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <select id="invFilterCategory" class="form-select form-select-sm" onchange="applyInventoryFilters()">
+                                <option value="">All Categories</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <div class="form-check" style="padding-top: 6px;">
+                                <input class="form-check-input" type="checkbox" id="invHideZeroQty" 
+                                       onchange="applyInventoryFilters()">
+                                <label class="form-check-label small" for="invHideZeroQty">
+                                    &#x261E; Hide 0 Qty
+                                </label>
+                            </div>
+                        </div>
+                        <!-- Third Row: Action Buttons & Count -->
+                        <div class="col-md-12 text-end">
+                            <button class="btn btn-outline-secondary btn-sm" onclick="clearInventoryFilters()">
+                                <i class="bi bi-x-circle"></i> Clear All Filters
+                            </button>
+                            <span id="invRowCount" class="badge bg-secondary ms-2">0 Items</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Data Table -->
+            <div class="card shadow-sm">
+                <div class="card-body p-0">
+                    <div class="table-responsive scrollable-table-container" style="height: 65vh;">
+                        <table id="inventoryTable" class="table table-striped table-hover w-100 mb-0 table-sm" style="font-size: 0.85rem;">
+                            <thead class="sticky-top bg-white" style="z-index: 10;">
+                                <tr>
+                                    <th style="width: 120px;">SKU</th>
+                                    <th style="width: 300px;">Name</th>
+                                    <th>Brand</th>
+                                    <th>Category</th>
+                                    <th class="text-end">Price</th>
+                                    <th class="text-end">Qty</th>
+                                    <th class="text-end">Weight</th>
+                                </tr>
+                            </thead>
+                            <tbody id="inventoryTableBody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Status Log -->
+            <div id="inventory-status-log" class="small text-muted mt-2 ps-2"></div>
+        </div>
+
+    </div>
+
+<div id="suggestion-tooltip" class="tooltip-container"></div>
+<div id="brand-sticky-popup" class="brand-popup">
+<div class="brand-popup-header">
+    <span>Select Brand</span>
+    <span class="brand-popup-close" onclick="closeBrandPopup()">✕</span>
+</div>
+<div class="brand-popup-body" id="brand-popup-list"></div>
+</div>
+
+<!-- Paperclip Tooltip (Hidden, shown on hover) -->
+<div id="paperclip-tooltip" class="paperclip-tooltip"></div>
+
+<!-- Inventory Export Modal -->
+<div class="modal fade" id="inventoryExportModal" tabindex="-1">
+<div class="modal-dialog">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h5 class="modal-title"> Export Inventory Report</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+            <div id="exportNoTabs" class="alert alert-warning">
+                <i class="bi bi-exclamation-triangle"></i> No data tabs are currently open. Please fetch or load data first.
+            </div>
+            
+            <div id="exportTabsSection" style="display: none;">
+                <label class="fw-bold mb-2">Select Tabs to Export:</label>
+                <div class="form-check mb-2">
+                    <input class="form-check-input" type="checkbox" id="exportAllTabs" onchange="toggleAllTabsExport(this)" checked>
+                    <label class="form-check-label fw-bold" for="exportAllTabs">
+                        All Open Tabs
+                    </label>
+                </div>
+                <hr class="my-2">
+                <div id="exportTabsList">
+                    <!-- Checkboxes for open tabs will be dynamically added here -->
+                </div>
+                <div class="alert alert-info mt-3 small">
+                    <strong>&#x1F4A1; Export Format:</strong><br>
+                    &#x2022; 1 tab selected → CSV file<br>
+                    &#x2022; Multiple tabs → Excel workbook (.xlsx) with separate sheets
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" class="btn btn-success" onclick="generateInventoryReport()" id="exportDownloadBtn" disabled>
+                <i class="bi bi-download"></i> Download
+            </button>
+        </div>
+    </div>
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://code.jquery.com/jquery-3.7.0.js"></script>
+<script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+
+
+<!-- ── Modals (outside content wrapper) ──────────────────────────────── -->
+<!-- BLAZE DETAIL MODAL -->
+<div id="detailModalBackdrop"></div>
+<div id="detailModal">
+<div class="modal-header">
+    <button class="close-btn" onclick="closeDetailModal()">✕</button>
+    <div class="modal-title" id="detailModalTitle"></div>
+    <div class="modal-id" id="detailModalId"></div>
+    <div class="modal-type" id="detailModalType"></div>
+</div>
+<div class="modal-body" id="detailModalBody"></div>
+</div>
+
+<!-- ZOMBIE CLEANUP MODAL -->
+<div id="zombieModalBackdrop" class="zombie-modal-backdrop"></div>
+<div id="zombieModal" class="zombie-modal">
+<h3> Zombie Cleanup Mode</h3>
+<p>
+    <strong>Zombie Deals</strong> are promotions that are still <span style="color: #28a745; font-weight: bold;">Active</span> 
+    but have an <span style="color: #dc3545; font-weight: bold;">End Date in the past</span>. 
+    These should be disabled to prevent confusion.
+</p>
+<p>
+    <strong>Found: <span id="zombieCountDisplay">0</span> Zombie Deal(s)</strong>
+</p>
+<div id="zombieActionButtons" class="btn-group-vertical">
+    <button onclick="runManualCleanup()" class="btn btn-outline-primary">
+         Run Manual <small style="display:block; font-weight:normal;">(Disable zombies yourself, click "Finish" when done)</small>
+    </button>
+    <button onclick="runAutoCleanup()" class="btn btn-danger">
+         Run Auto <small style="display:block; font-weight:normal;">(Automatically disable all zombies one-by-one)</small>
+    </button>
+    <button onclick="cancelZombieCleanup()" class="btn btn-secondary">
+        [X] Cancel
+    </button>
+</div>
+<div id="zombieProgressContainer" class="zombie-progress-container">
+    <div class="zombie-progress-bar">
+        <div id="zombieProgressFill" class="zombie-progress-fill"></div>
+    </div>
+    <div id="zombieProgressText" class="zombie-progress-text">Initializing...</div>
+</div>
+</div>
+
+<!-- DRAFT SELECTED MODAL -->
+<div id="draftModalBackdrop" class="draft-modal-backdrop"></div>
+<div id="draftModal" class="draft-modal">
+<h3 style="color: #fd7e14;"><i class="bi bi-pencil-square"></i> Draft Selected Deals</h3>
+<p>
+    You are about to set <strong><span id="draftCountDisplay">0</span> deal(s)</strong> to <span style="color: #6c757d; font-weight: bold;">Inactive</span> status.
+</p>
+<p class="text-muted small">
+    This will disable the selected promotions one by one. You can stop the process at any time.
+</p>
+<div id="draftActionButtons" class="btn-group-vertical w-100" style="gap: 10px;">
+    <button onclick="runDraftAutomation()" class="btn btn-warning">
+        <i class="bi bi-play-fill"></i> Start Drafting
+    </button>
+    <button onclick="cancelDraftModal()" class="btn btn-secondary">
+        <i class="bi bi-x-lg"></i> Cancel
+    </button>
+</div>
+<div id="draftProgressContainer" class="draft-progress-container">
+    <div class="draft-progress-bar">
+        <div id="draftProgressFill" class="draft-progress-fill"></div>
+    </div>
+    <div id="draftProgressText" class="draft-progress-text">Initializing...</div>
+    <button onclick="stopDraftAutomation()" class="btn btn-outline-danger btn-sm mt-3 w-100" id="draftStopBtn">
+        <i class="bi bi-stop-fill"></i> Stop
+    </button>
+</div>
+</div>
+
+<!-- DRAFT REVIEW MODAL -->
+<div id="draftReviewModalBackdrop" class="draft-modal-backdrop"></div>
+<div id="draftReviewModal" class="draft-modal" style="max-width: 900px;">
+<h3 style="color: #28a745;"><i class="bi bi-check-circle-fill"></i> Draft Complete!</h3>
+<p>Successfully set <strong><span id="draftReviewCount">0</span> deal(s)</strong> to Inactive.</p>
+<div class="draft-review-table mb-3" id="draftReviewTableContainer">
+    <!-- Table will be injected here -->
+</div>
+<div class="d-flex gap-2 justify-content-end">
+    <button onclick="filterToDraftedDeals()" class="btn btn-outline-primary">
+        <i class="bi bi-filter"></i> Filter Table to Show These
+    </button>
+    <button onclick="closeDraftReviewModal()" class="btn btn-success">
+        <i class="bi bi-check-lg"></i> Done
+    </button>
+</div>
+</div>
+
+<!-- v63: TAX CALCULATOR MODAL -->
+<div id="calcModal">
+<div class="calc-content">
+    <div class="calc-header">
+        <h2> Tax Calculator</h2>
+        <button class="calc-close" onclick="toggleCalcModal()">✕</button>
+    </div>
+    
+    <div class="store-selector">
+        <label for="calcStoreSelect">Select Store (for Tax Calcs):</label>
+        <select id="calcStoreSelect" onchange="updateTaxRateDisplay(); runAllCalculations();">
+            <option value="">-- Loading Stores --</option>
+        </select>
+        <div class="tax-rate-display" id="calcTaxDisplay">Tax Rate: Not selected</div>
+    </div>
+
+    <div style="background: #e9ecef; padding: 10px; border-radius: 8px; margin-bottom: 20px;">
+        <label for="calcTypeSelect" style="font-weight:bold; display:block; margin-bottom:5px; color:#495057;">Select Tool:</label>
+        <select id="calcTypeSelect" class="form-select" onchange="switchCalculator()" style="width:100%; padding:8px; border-radius:4px; border:1px solid #ced4da;">
+            <option value="postTax"> Post-Tax Calculator</option>
+            <option value="preTax"> Pre-Tax Calculator</option>
+            <option value="percent"> Percentage Calculator</option>
+            <option value="rebate"> Vendor Rebate Calculator</option>
+            <option value="reprice"> Correct Percent Off Discount (Pre-Tax)</option>
+        </select>
+    </div>
+    
+    <div id="calc-postTax" class="calc-section">
+        <h3> Post-Tax Calculator</h3>
+        <p style="color: #6c757d; font-size: 0.9em; margin-bottom: 10px;">Calculate after-tax price from discount value</p>
+        <div class="calc-row">
+            <label>Discount Value:</label>
+            <input type="number" id="postTaxInput" step="0.01" placeholder="e.g., 10.00" oninput="calculatePostTax()">
+        </div>
+        <div class="calc-row">
+            <label>After Tax:</label>
+            <div class="result" id="postTaxResult">--</div>
+        </div>
+    </div>
+    
+    <div id="calc-preTax" class="calc-section" style="display:none;">
+        <h3> Pre-Tax Calculator</h3>
+        <p style="color: #6c757d; font-size: 0.9em; margin-bottom: 10px;">Calculate discount value from after-tax price</p>
+        <div class="calc-row">
+            <label>After-Tax Price:</label>
+            <input type="number" id="preTaxInput" step="0.01" placeholder="e.g., 10.98" oninput="calculatePreTax()">
+        </div>
+        <div class="calc-row">
+            <label>Discount Value:</label>
+            <div class="result" id="preTaxResult">--</div>
+        </div>
+    </div>
+    
+    <div id="calc-percent" class="calc-section" style="display:none;">
+        <h3> Percentage Calculator</h3>
+        <p style="color: #6c757d; font-size: 0.9em; margin-bottom: 10px;">Calculate percentage from base and result</p>
+        <div class="calc-row">
+            <label>Base Amount:</label>
+            <input type="number" id="percBaseInput" step="0.01" placeholder="e.g., 50.00" oninput="calculatePercentage()">
+        </div>
+        <div class="calc-row">
+            <label>Result Amount:</label>
+            <input type="number" id="percResultInput" step="0.01" placeholder="e.g., 45.00" oninput="calculatePercentage()">
+        </div>
+        <div class="calc-row">
+            <label>Percentage Off:</label>
+            <div class="result" id="percResult">--</div>
+        </div>
+    </div>
+    
+    <div id="calc-rebate" class="calc-section" style="display:none;">
+        <h3> Vendor Rebate Calculator</h3>
+        <p style="color: #6c757d; font-size: 0.9em; margin-bottom: 10px;">Calculate vendor contribution from discount and rebate percentage</p>
+        <div class="calc-row">
+            <label>Discount Value:</label>
+            <input type="number" id="vendorDiscountInput" step="0.01" placeholder="e.g., 10.00" oninput="calculateVendorRebate()">
+        </div>
+        <div class="calc-row">
+            <label>Rebate %:</label>
+            <input type="number" id="vendorRebateInput" step="0.01" placeholder="e.g., 50" oninput="calculateVendorRebate()">
+        </div>
+        <div class="calc-row">
+            <label>Vendor Contribution:</label>
+            <div class="result" id="vendorResult">--</div>
+        </div>
+    </div>
+
+    <div id="calc-reprice" class="calc-section" style="display:none;">
+        <h3>[!] ⚠️⚠️ Reprice / Stack Fixer</h3>
+        <p style="color: #6c757d; font-size: 0.9em; margin-bottom: 10px;">
+            Calculate required flat discount to bridge the gap between current price and desired % off. (Example: Is 45% Off but needs to be 50% Off)<br>
+            <strong>(PRE-TAX VALUES ONLY)</strong>
+        </p>
+        <div class="calc-row">
+            <label>Original Price:</label>
+            <input type="number" id="repriceOriginal" step="0.01" placeholder="Slash-out Price (e.g. 95.51)" oninput="calculateReprice()">
+        </div>
+        <div class="calc-row">
+            <label>Current Price:</label>
+            <input type="number" id="repriceCurrent" step="0.01" placeholder="Current Price (e.g. 57.31)" oninput="calculateReprice()">
+        </div>
+        <div class="calc-row">
+            <label>Desired % Off:</label>
+            <input type="number" id="repriceTargetPerc" step="0.1" placeholder="Target % (e.g. 50)" oninput="calculateReprice()">
+        </div>
+        <div class="calc-row" style="background:#e7f5ff; padding:10px; border-radius:5px; margin-top:10px;">
+            <label style="color:#000;">Flat Discount to Enter:</label>
+            <div class="result" id="repriceResult" style="background:white; border:2px solid #667eea; font-size:1.2em;">--</div>
+        </div>
+    </div>
+</div>
+</div>
+
+<!-- Register Profile Modal -->
+<div class="modal fade" id="registerProfileModal" tabindex="-1" aria-hidden="true">
+<div class="modal-dialog modal-lg">
+<div class="modal-content">
+    <div class="modal-header" style="background: linear-gradient(135deg, #4285F4 0%, #34A853 50%, #FBBC05 75%, #EA4335 100%);">
+        <h5 class="modal-title text-white"><i class="bi bi-person-plus"></i> Register New Google Profile</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+    </div>
+    <div class="modal-body">
+        <!-- Step Indicator -->
+        <div class="d-flex justify-content-center mb-4">
+            <div id="step-indicator" class="d-flex align-items-center gap-2">
+                <span id="step1-badge" class="badge bg-primary rounded-pill px-3 py-2">1. Enter Handle</span>
+                <i class="bi bi-arrow-right text-muted"></i>
+                <span id="step2-badge" class="badge bg-secondary rounded-pill px-3 py-2">2. Add Credentials</span>
+                <i class="bi bi-arrow-right text-muted"></i>
+                <span id="step3-badge" class="badge bg-secondary rounded-pill px-3 py-2">3. Complete</span>
+            </div>
+        </div>
+
+        <!-- Step 1: Enter Handle -->
+        <div id="register-step1">
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle"></i> 
+                Enter your <strong>email handle</strong> - the part before the @ symbol.
+                <br><span class="text-muted">Example: For john.doe@company.com, enter <code>john.doe</code></span>
+            </div>
+            
+            <div class="mb-3">
+                <label class="form-label fw-bold">Email Handle</label>
+                <div class="input-group">
+                    <input type="text" id="new-profile-handle" class="form-control form-control-lg" 
+                           placeholder="john.doe" pattern="[a-z0-9._-]+"
+                           oninput="this.value = this.value.toLowerCase().replace(/[^a-z0-9._-]/g, '')">
+                    <span class="input-group-text text-muted">@email.com</span>
+                </div>
+                <div id="handle-error" class="text-danger mt-2" style="display: none;"></div>
+            </div>
+            
+            <div class="text-center">
+                <button class="btn btn-primary btn-lg px-5" onclick="registerStep1Next()">
+                    Next <i class="bi bi-arrow-right"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Step 2: Add Credentials File -->
+        <div id="register-step2" style="display: none;">
+            <div class="alert alert-warning">
+                <i class="bi bi-exclamation-triangle"></i> 
+                <strong>Credentials file not found!</strong>
+            </div>
+            
+            <div class="card mb-3">
+                <div class="card-header bg-light">
+                    <strong>Required File:</strong>
+                </div>
+                <div class="card-body">
+                    <code id="expected-creds-path" class="d-block p-2 bg-dark text-light rounded">config/google_credentials/credentials_[handle].json</code>
+                </div>
+            </div>
+            
+            <div class="card mb-3">
+                <div class="card-header bg-light">
+                    <strong>How to get this file:</strong>
+                </div>
+                <div class="card-body small">
+                    <ol class="mb-0">
+                        <li>Go to <a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a></li>
+                        <li>Create a project and enable <strong>Google Sheets API</strong></li>
+                        <li>Go to <strong>OAuth Consent Screen</strong> → Add your email as a Test User</li>
+                        <li>Go to <strong>Credentials</strong> → Create <strong>OAuth Client ID</strong> (Desktop App)</li>
+                        <li>Download the JSON and rename it as shown above</li>
+                        <li>Place it in the <code>config/google_credentials/</code> folder</li>
+                    </ol>
+                </div>
+            </div>
+            
+            <div class="text-center">
+                <button class="btn btn-outline-secondary me-2" onclick="registerGoBack()">
+                    <i class="bi bi-arrow-left"></i> Back
+                </button>
+                <button class="btn btn-success btn-lg px-4" onclick="registerCheckCredentials()">
+                    <i class="bi bi-arrow-clockwise"></i> Check Again
+                </button>
+            </div>
+        </div>
+
+        <!-- Step 3: Success -->
+        <div id="register-step3" style="display: none;">
+            <div class="text-center py-4">
+                <div style="font-size: 4em; color: #34A853;"><i class="bi bi-check-circle-fill"></i></div>
+                <h4 class="text-success mt-3">Profile Registered Successfully!</h4>
+                <p class="text-muted" id="register-success-msg">Profile "john.doe" has been created.</p>
+                <p class="text-muted">The application will restart to load your new profile.</p>
+            </div>
+            
+            <div class="text-center">
+                <button class="btn btn-primary btn-lg px-5" onclick="restartAfterRegister()">
+                    <i class="bi bi-power"></i> Restart Now
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+</div>
+</div>
+
+<!-- First Run Modal (shown when no profiles exist) -->
+<div class="modal fade" id="firstRunModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false" aria-hidden="true">
+<div class="modal-dialog modal-dialog-centered">
+<div class="modal-content">
+    <div class="modal-header" style="background: linear-gradient(135deg, #4285F4 0%, #34A853 50%, #FBBC05 75%, #EA4335 100%);">
+        <h5 class="modal-title text-white"><i class="bi bi-stars"></i> Welcome to BLAZE MIS Audit Pro!</h5>
+    </div>
+    <div class="modal-body text-center py-4">
+        <div style="font-size: 3em; color: #4285F4;"><i class="bi bi-person-badge"></i></div>
+        <h5 class="mt-3">No Google Profiles Found</h5>
+        <p class="text-muted">To get started, you'll need to register a Google account profile.</p>
+        <p class="text-muted small">This connects your Google Sheets for deal management.</p>
+    </div>
+    <div class="modal-footer justify-content-center">
+        <button class="btn btn-lg px-5" onclick="openRegisterFromFirstRun()" 
+                style="background: linear-gradient(135deg, #34A853 0%, #4285F4 100%); color: white; font-weight: 600;">
+            <i class="bi bi-plus-lg"></i> Register Profile
+        </button>
+    </div>
+</div>
+</div>
+</div>
+
+<div class="modal fade" id="helpModal" tabindex="-1" aria-hidden="true">
+<div class="modal-dialog modal-xl">
+    <div class="modal-content">
+        <div class="modal-header bg-danger text-white">
+            <h5 class="modal-title"><i class="bi bi-life-preserver"></i> System Help & Account Setup</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+            <!-- Tab Navigation -->
+            <ul class="nav nav-tabs mb-3" id="helpTabs" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="help-troubleshoot-tab" data-bs-toggle="tab" data-bs-target="#help-troubleshoot" type="button" role="tab">
+                        <i class="bi bi-wrench"></i> Troubleshooting
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="help-newaccount-tab" data-bs-toggle="tab" data-bs-target="#help-newaccount" type="button" role="tab">
+                        <i class="bi bi-person-plus"></i> New Account Setup
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="help-structure-tab" data-bs-toggle="tab" data-bs-target="#help-structure" type="button" role="tab">
+                        <i class="bi bi-folder"></i> Folder Structure
+                    </button>
+                </li>
+            </ul>
+
+            <!-- Tab Content -->
+            <div class="tab-content" id="helpTabContent">
+                
+                <!-- TROUBLESHOOTING TAB -->
+                <div class="tab-pane fade show active" id="help-troubleshoot" role="tabpanel">
+                    <div class="alert alert-warning">
+                        <strong><i class="bi bi-exclamation-triangle"></i> Moving to a new computer?</strong><br>
+                        If the script crashes or fails to login on a new machine, delete your profile's <code>chrome_profiles/chrome_[handle]/</code> folder and <code>config/tokens/token_[handle].json</code> file.
+                    </div>
+
+                    <h5 class="text-danger mt-4 border-bottom pb-2">Common Fixes</h5>
+                    <div class="accordion" id="helpAccordion">
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#fix1">
+                                    Script crashes immediately on startup
+                                </button>
+                            </h2>
+                            <div id="fix1" class="accordion-collapse collapse" data-bs-parent="#helpAccordion">
+                                <div class="accordion-body">
+                                    This usually means the <strong>Chrome Profile</strong> is corrupted. 
+                                    <br><strong>Fix:</strong> Delete your profile folder in <code>chrome_profiles/</code> and restart.
+                                </div>
+                            </div>
+                        </div>
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#fix2">
+                                    "Google Login Failed" or 400 Error
+                                </button>
+                            </h2>
+                            <div id="fix2" class="accordion-collapse collapse" data-bs-parent="#helpAccordion">
+                                <div class="accordion-body">
+                                    Your Google session token is invalid.
+                                    <br><strong>Fix:</strong> Delete <code>config/tokens/token_[handle].json</code>. Restart the script and re-authorize with Google.
+                                </div>
+                            </div>
+                        </div>
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#fix3">
+                                    "Profile not found" on startup
+                                </button>
+                            </h2>
+                            <div id="fix3" class="accordion-collapse collapse" data-bs-parent="#helpAccordion">
+                                <div class="accordion-body">
+                                    The system scans <code>config/tokens/</code> for existing profiles.
+                                    <br><strong>Fix:</strong> Select "Register New Profile" to set up a new account.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- NEW ACCOUNT SETUP TAB -->
+                <div class="tab-pane fade" id="help-newaccount" role="tabpanel">
+                    <div class="alert alert-info">
+                        <strong><i class="bi bi-info-circle"></i> Multi-Account System</strong><br>
+                        This tool supports multiple Google accounts. Each account uses an "email handle" (the part before @) as its identifier.
+                        <br>Example: For <code>john.doe@company.com</code>, the handle is <code>john.doe</code>
+                    </div>
+
+                    <h5 class="text-primary mt-4 border-bottom pb-2"><i class="bi bi-cloud"></i> Step 1: Google Cloud Console Setup</h5>
+                    <div class="card mb-3">
+                        <div class="card-body small">
+                            <ol>
+                                <li>Log into <a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a> with your <strong>NEW email</strong>.</li>
+                                <li>Create a <strong>New Project</strong> (e.g., "MIS Audit Tool").</li>
+                                <li>Go to <strong>APIs &amp; Services &gt; Library</strong> and Enable:
+                                    <ul>
+                                        <li><strong>Google Sheets API</strong></li>
+                                        <li><strong>Google Drive API</strong></li>
+                                    </ul>
+                                </li>
+                                <li>Go to <strong>OAuth Consent Screen</strong>:
+                                    <ul>
+                                        <li>Select <strong>External</strong>.</li>
+                                        <li>Fill in App Name and Support Email.</li>
+                                        <li class="text-danger"><strong>CRITICAL:</strong> Add your email to "Test Users"!</li>
+                                    </ul>
+                                </li>
+                                <li>Go to <strong>Credentials</strong>:
+                                    <ul>
+                                        <li>Click <strong>+ CREATE CREDENTIALS</strong> &gt; <strong>OAuth client ID</strong>.</li>
+                                        <li>Application Type: <strong>Desktop App</strong>.</li>
+                                        <li>Download the JSON file.</li>
+                                    </ul>
+                                </li>
+                            </ol>
+                        </div>
+                    </div>
+
+                    <h5 class="text-success mt-4 border-bottom pb-2"><i class="bi bi-file-earmark-arrow-down"></i> Step 2: File Setup</h5>
+                    <div class="card mb-3">
+                        <div class="card-body small">
+                            <ol>
+                                <li>Rename the downloaded JSON to: <code>credentials_[your_email_prefix].json</code>
+                                    <br><span class="text-muted">Example: <code>credentials_john.doe.json</code></span>
+                                </li>
+                                <li>Place it in: <code>config/google_credentials/</code></li>
+                            </ol>
+                            <div class="alert alert-secondary mt-2 mb-0 py-2">
+                                <strong>Expected path:</strong> <code>config/google_credentials/credentials_john.doe.json</code>
+                            </div>
+                        </div>
+                    </div>
+
+                    <h5 class="text-warning mt-4 border-bottom pb-2"><i class="bi bi-play-circle"></i> Step 3: Registration</h5>
+                    <div class="card mb-3">
+                        <div class="card-body small">
+                            <ol>
+                                <li>Restart this script.</li>
+                                <li>Select <strong>"Register New Profile"</strong> from the menu.</li>
+                                <li>Enter your email handle when prompted.</li>
+                                <li>Complete the Google sign-in in the browser popup.</li>
+                                <li>Done! Your profile is now saved.</li>
+                            </ol>
+                        </div>
+                    </div>
+
+                    <h5 class="text-info mt-4 border-bottom pb-2"><i class="bi bi-gear"></i> Step 4: Configure MIS/Blaze Credentials (Optional)</h5>
+                    <div class="card mb-3">
+                        <div class="card-body small">
+                            <p>To auto-fill MIS and Blaze login credentials, edit:</p>
+                            <code>config/blaze_configs/blaze_config_[handle].json</code>
+                            <pre class="bg-dark text-light p-2 mt-2 rounded" style="font-size: 0.8em;">{
+"mis_username": "your_mis_username",
+"mis_password": "your_mis_password",
+"blaze_email": "your_blaze_email",
+"blaze_password": "your_blaze_password",
+"default_spreadsheet_id": "your_google_sheet_id"
+}</pre>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- FOLDER STRUCTURE TAB -->
+                <div class="tab-pane fade" id="help-structure" role="tabpanel">
+                    <h5 class="text-primary border-bottom pb-2"><i class="bi bi-folder2-open"></i> Directory Structure</h5>
+                    <p class="text-muted">The script automatically creates this structure on first run:</p>
+                    <pre class="bg-dark text-light p-3 rounded" style="font-size: 0.85em;">project_folder/
+📂 DASHBOARD.py                    # Main script
+📂 config/
+├──   ├── google_credentials/         # OAuth JSON files
+└──   └──   └── credentials_john.doe.json
+└──   └──   └── credentials_jane.smith.json
+├──   ├── tokens/                     # Google auth tokens (auto-generated)
+└──   └──   └── token_john.doe.json
+└──   └──   └── token_jane.smith.json
+├──   ├── blaze_configs/              # MIS/Blaze credentials per profile
+└──       └── blaze_config_john.doe.json
+└──       └── blaze_config_jane.smith.json
+📂 chrome_profiles/                # Isolated browser profiles
+├──   ├── chrome_john.doe/
+└──   └── chrome_jane.smith/
+📂 reports/
+📂 MIS_CSV_REPORTS/            # Downloaded MIS exports
+📂 BLAZE_CSV_REPORTS/
+📂 INVENTORY/              # Inventory scan results</pre>
+
+                    <h5 class="text-success mt-4 border-bottom pb-2">Files You Provide</h5>
+                    <table class="table table-sm table-bordered">
+                        <thead class="table-light">
+                            <tr><th>File</th><th>Description</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><code>credentials_[handle].json</code></td>
+                                <td>OAuth JSON from Google Cloud Console</td>
+                            </tr>
+                            <tr>
+                                <td><code>blaze_config_[handle].json</code></td>
+                                <td>MIS/Blaze login credentials (optional)</td>
+                            </tr>
+                        </tbody>
+                    </table>
+
+                    <h5 class="text-warning mt-4 border-bottom pb-2">Auto-Generated Files (Safe to Delete)</h5>
+                    <table class="table table-sm table-bordered">
+                        <thead class="table-light">
+                            <tr><th>File/Folder</th><th>Description</th><th>When to Delete</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><code>chrome_profiles/chrome_[handle]/</code></td>
+                                <td>Browser cookies/state</td>
+                                <td>Browser crashes or moving computers</td>
+                            </tr>
+                            <tr>
+                                <td><code>config/tokens/token_[handle].json</code></td>
+                                <td>Google session token</td>
+                                <td>Google login fails or token expired</td>
+                            </tr>
+                            <tr>
+                                <td><code>blaze_groups.json</code></td>
+                                <td>Promotion group cache</td>
+                                <td>Missing group names in dashboard</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        </div>
+    </div>
+</div>
+</div>    
+
+    <!-- External JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.7.0.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+
+    <!-- App JS (load order: state → api → tabs → components) -->
+    <script src="/static/js/state.js"></script>
+    <script src="/static/js/api.js"></script>
+    <script src="/static/js/tabs/mis-matcher.js"></script>
+    <script src="/static/js/tabs/mis-updown.js"></script>
+    <script src="/static/js/tabs/mis-audit.js"></script>
+    <script src="/static/js/tabs/blaze.js"></script>
+    <script src="/static/js/components/preflight.js"></script>
+    <script src="/static/js/components/validation-banner.js"></script>
+    <script src="/static/js/components/datatables-init.js"></script>
+
+</html>

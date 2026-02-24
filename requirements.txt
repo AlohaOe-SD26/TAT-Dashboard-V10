@@ -1,0 +1,36 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# TAT-MIS-Architect — requirements.txt
+# Python 3.10+  |  Pin with pip-compile for production deploys.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Web framework ──────────────────────────────────────────────────────────
+flask>=3.0,<4.0
+
+# ── Data & fuzzy matching ──────────────────────────────────────────────────
+pandas>=2.0,<3.0
+rapidfuzz>=3.0          # Preferred — fuzzywuzzy is fallback if unavailable
+fuzzywuzzy>=0.18        # Fallback (requires python-Levenshtein for speed)
+python-Levenshtein>=0.21
+
+# ── Google integration ─────────────────────────────────────────────────────
+google-auth>=2.0
+google-auth-oauthlib>=1.0
+google-auth-httplib2>=0.1
+google-api-python-client>=2.0
+
+# ── Browser automation ─────────────────────────────────────────────────────
+selenium>=4.15
+undetected-chromedriver>=3.5  # Grey-hat bypass — required for MIS site
+
+# ── Process & system utilities ─────────────────────────────────────────────
+psutil>=5.9
+requests>=2.31
+
+# ── Database (session persistence) ────────────────────────────────────────
+# sqlite3 is stdlib — no install needed
+# Redis (optional, swap in SessionManager for production scale):
+# redis>=5.0
+
+# ── Dev / testing only ─────────────────────────────────────────────────────
+# pytest>=7.0
+# pytest-flask>=1.3

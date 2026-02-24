@@ -1,0 +1,133 @@
+/* variables.css — TAT-MIS-Architect design tokens
+ * All color, spacing, shadow, and typography primitives.
+ * Use var(--token-name) everywhere — never hardcode values in components.
+ */
+
+:root {
+  /* ── Brand palette ─────────────────────────────────────────────────────── */
+  --color-primary:      #667eea;   /* Indigo — main action color           */
+  --color-primary-dark: #5a67d8;   /* Hover / active state                 */
+  --color-secondary:    #764ba2;   /* Purple — gradient pair               */
+  --color-success:      #28a745;   /* Green  — verified, OK                */
+  --color-warning:      #fd7e14;   /* Orange — advisory, partial           */
+  --color-danger:       #dc3545;   /* Red    — critical, blocked           */
+  --color-info:         #17a2b8;   /* Teal   — informational               */
+  --color-muted:        #6c757d;   /* Gray   — disabled, placeholders      */
+
+  /* ── Google profile chrome gradient ────────────────────────────────────── */
+  --gradient-google:
+    linear-gradient(135deg, #4285F4 0%, #34A853 50%, #FBBC05 75%, #EA4335 100%);
+
+  /* ── Section header gradients ───────────────────────────────────────────── */
+  --gradient-updown:
+    linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+  --gradient-cleanup:
+    linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  --gradient-comp-audit:
+    linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+
+  /* ── Background & surface ───────────────────────────────────────────────── */
+  --bg-body:      #1a1a2e;   /* App-level dark background                   */
+  --bg-surface:   #16213e;   /* Card / panel surface                        */
+  --bg-elevated:  #0f3460;   /* Elevated cards, modals                      */
+  --bg-light:     #f8f9fa;   /* Light panels (Bootstrap default)            */
+
+  /* ── Text ───────────────────────────────────────────────────────────────── */
+  --text-primary:   #e0e0e0;   /* Main text on dark surfaces               */
+  --text-secondary: #adb5bd;   /* Secondary / muted text                   */
+  --text-inverse:   #212529;   /* Text on light surfaces                   */
+  --text-link:      #90caf9;   /* Hyperlinks on dark surfaces              */
+
+  /* ── Borders ────────────────────────────────────────────────────────────── */
+  --border-color:   #dee2e6;
+  --border-dark:    #2d3748;
+  --border-radius:  6px;
+  --border-radius-lg: 12px;
+
+  /* ── Shadows ────────────────────────────────────────────────────────────── */
+  --shadow-sm:   0 1px 3px rgba(0,0,0,.12);
+  --shadow-md:   0 4px 6px rgba(0,0,0,.16);
+  --shadow-lg:   0 10px 15px rgba(0,0,0,.20);
+  --shadow-card: 0 2px 8px rgba(0,0,0,.15);
+
+  /* ── Spacing scale ──────────────────────────────────────────────────────── */
+  --sp-xs:  4px;
+  --sp-sm:  8px;
+  --sp-md:  16px;
+  --sp-lg:  24px;
+  --sp-xl:  40px;
+  --sp-2xl: 64px;
+
+  /* ── Typography ─────────────────────────────────────────────────────────── */
+  --font-family-base: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-family-mono: 'Cascadia Code', 'Fira Mono', 'Consolas', monospace;
+  --font-size-sm:   0.8rem;
+  --font-size-base: 0.9rem;
+  --font-size-lg:   1.1rem;
+  --font-weight-bold: 600;
+
+  /* ── Transition ─────────────────────────────────────────────────────────── */
+  --transition-fast:   150ms ease;
+  --transition-normal: 250ms ease;
+
+  /* ── Validation banner severity colors ──────────────────────────────────── */
+  --vb-critical-bg:   var(--color-danger);
+  --vb-advisory-bg:   var(--color-warning);
+  --vb-ok-bg:         var(--color-success);
+  --vb-text:          #fff;
+
+  /* ── DataTable row states ───────────────────────────────────────────────── */
+  --row-verified:    rgba(40, 167, 69,  0.12);
+  --row-mismatch:    rgba(220, 53, 69,  0.12);
+  --row-not-found:   rgba(255, 193, 7,  0.12);
+  --row-missing-id:  rgba(108, 117, 125,0.12);
+
+  /* ── Nav heights ────────────────────────────────────────────────────────── */
+  --nav-main-height:  46px;
+  --nav-sub-height:   44px;
+  --header-height:    64px;
+
+  /* ── Z-index scale ──────────────────────────────────────────────────────── */
+  --z-banner:  9999;
+  --z-modal:   9000;
+  --z-tooltip: 8000;
+  --z-dropdown:7000;
+  --z-overlay: 6000;
+}
+
+/* ── Dark-mode baseline resets ──────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-family-base);
+  font-size:   var(--font-size-base);
+  background:  var(--bg-body);
+  color:       var(--text-primary);
+  margin:      0;
+}
+
+code, pre, .font-mono {
+  font-family: var(--font-family-mono);
+}
+
+/* ── Utility overrides that depend on tokens ─────────────────────────────── */
+.text-muted   { color: var(--text-secondary) !important; }
+.border-dark  { border-color: var(--border-dark) !important; }
+.shadow-card  { box-shadow: var(--shadow-card); }
+
+.gradient-primary {
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+}
+
+/* Validation severity badges */
+.severity-critical { background: var(--vb-critical-bg); color: var(--vb-text); }
+.severity-advisory { background: var(--vb-advisory-bg); color: var(--vb-text); }
+.severity-ok       { background: var(--vb-ok-bg);       color: var(--vb-text); }
+
+/* DataTable row state shading */
+.row-verified   { background: var(--row-verified)   !important; }
+.row-mismatch   { background: var(--row-mismatch)   !important; }
+.row-not-found  { background: var(--row-not-found)  !important; }
+.row-missing-id { background: var(--row-missing-id) !important; }

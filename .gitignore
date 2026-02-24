@@ -1,0 +1,74 @@
+# TAT-MIS-Architect .gitignore - v1.2
+# Traceability: v1.2 - Added config/tokens/ and config/google_creds/ to prevent pushing sensitive OAuth secrets.
+# Traceability: v1.1 - Added config/chrome/ and **/Cache/ to prevent permission denied errors on locked cache files.
+
+# ── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+
+# ── Virtual Environments ────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+
+# ── Secrets & Credentials (NEVER commit these) ──────────────────────────────
+secrets.py
+config/profiles/
+config/*.json
+!config/settings.json.example
+blaze_token.json
+BLAZE_MIS_CREDENTIALS.json
+*.credentials.json
+service_account*.json
+token.json
+config/tokens/
+config/google_creds/
+
+# ── Session & State ─────────────────────────────────────────────────────────
+config/session.db
+config/*.db
+*.db-shm
+*.db-wal
+
+# ── Reports & Exports (runtime generated) ───────────────────────────────────
+reports/
+*.csv
+
+# ── Logs ────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Flask / Werkzeug ────────────────────────────────────────────────────────
+instance/
+.webassets-cache
+flask_session/
+
+# ── OS & Editor ─────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── Testing ─────────────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# ── Chrome / Selenium ───────────────────────────────────────────────────────
+chromedriver*
+undetected_chromedriver/
+chrome_profile*/
+# INSTRUCTIONS: Replace your existing .gitignore with this file.
+# The following lines bypass the locked UI cache files:
+config/chrome/
+**/Cache/

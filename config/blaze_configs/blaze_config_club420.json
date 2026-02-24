@@ -1,0 +1,13 @@
+{
+    "mis": {
+        "username": "nick@theartisttree.com",
+        "password": "NickMIS420!"
+    },
+    "blaze": {
+        "email": "nick@club420.com",
+        "password": "GameMasters11!!420"
+    },
+    "google_sheet": {
+        "default_url": "https://docs.google.com/spreadsheets/d/1tmoe8MmiTF0qSEFwsSuNpCQKZhl6z_eEkFZkgUx6hzk/edit?gid=39250639#gid=39250639"
+    }
+}
