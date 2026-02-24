@@ -76,7 +76,8 @@ const api = {
         run:           (body)  => apiPost('/api/mis/match', body),
         applyMatches:  (body)  => apiPost('/api/mis/apply-matches', body),
         applyBlaze:    (body)  => apiPost('/api/mis/apply-blaze-titles', body),
-        applySplitId:  (body)  => apiPost('/api/mis/apply-split-id', body),
+        applySplitId:        (body)  => apiPost('/api/mis/apply-split-id', body),
+        generateNewsletter:  (body)  => apiPost('/api/mis/generate-newsletter', body),
     },
 
     // ── Audit ─────────────────────────────────────────────────────────────────
@@ -88,10 +89,12 @@ const api = {
         validateLookup:  (body)  => apiPost('/api/mis/validate-lookup', body),
         compareToSheet:  (body)  => apiPost('/api/mis/compare-to-sheet', body),
         saveState:       (body)  => apiPost('/api/audit/save-state', body),
-        loadState:       ()      => apiGet('/api/audit/load-state'),
+        loadState:       (tab)   => apiGet(`/api/audit/load-state?tab=${encodeURIComponent(tab || 'default')}`),
         export:          (body)  => apiPost('/api/audit/export', body),
         lookupMisId:     (body)  => apiPost('/api/mis/lookup-mis-id', body),
-        searchBrand:     (body)  => apiPost('/api/mis/search-brand', body),
+        searchBrand:         (body)  => apiPost('/api/mis/search-brand', body),
+        run:                 (fd)    => apiPost('/api/mis/audit', fd, true),
+        reviewDiscrepancy:   (body)  => apiPost('/api/mis/review-discrepancy', body),
     },
 
     // ── Up-Down Planning ──────────────────────────────────────────────────────

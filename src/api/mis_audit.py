@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import re as _re
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -25,6 +26,63 @@ from src.core.auditor import run_maudit, run_conflict_audit_mis_vs_sheet, run_co
 from src.core.validation_engine import engine as validation_engine, ValidationRecord
 
 bp = Blueprint('mis_audit', __name__)
+
+_AUDIT_REPORTS_DIR = Path(__file__).resolve().parent.parent.parent / 'reports' / 'AUDIT_REPORTS'
+
+
+# ── Legacy Audit (section-keyed — required by displayAuditResults() in blaze.js) ──
+
+@bp.route('/api/mis/audit', methods=['POST'])
+def api_mis_audit():
+    """
+    Legacy-compatible audit route called by the 'Run Audit' button.
+    Returns results keyed by section {weekly, monthly, sale} for displayAuditResults() in blaze.js:648.
+    NOT the same as /api/mis/maudit (different response shape). Monolith: line 26519.
+    """
+    try:
+        tab_name = request.form.get('tab')
+        csv_file = request.files.get('csv')
+
+        if not tab_name:
+            return jsonify({'success': False, 'error': 'No tab selected'})
+
+        mis_df = None
+        if csv_file:
+            mis_df = pd.read_csv(csv_file)
+        else:
+            pulled_path = session.get('mis_csv_filepath')
+            if pulled_path and Path(pulled_path).exists():
+                mis_df = pd.read_csv(pulled_path)
+            else:
+                return jsonify({'success': False,
+                                'error': 'No CSV available. Pull or upload CSV first.'})
+
+        sections_data = fetch_google_sheet_data(tab_name)
+        if all(df.empty for df in sections_data.values()):
+            return jsonify({'success': False, 'error': 'No data found in selected tab'})
+
+        bmap = session.get_mis_bracket_map()
+        pmap = session.get_mis_prefix_map()
+
+        all_results: dict[str, list] = {}
+        for section in ('weekly', 'monthly', 'sale'):
+            df = sections_data.get(section, pd.DataFrame())
+            if not df.empty:
+                sr = run_maudit(df, mis_df, section, bmap, pmap)
+                # Flatten all buckets into one list per section for displayAuditResults()
+                all_results[section] = (
+                    sr.get('mismatches', []) +
+                    sr.get('not_found', []) +
+                    sr.get('missing_id', [])
+                )
+            else:
+                all_results[section] = []
+
+        return jsonify({'success': True, 'results': all_results})
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
 
 
 # ── MAudit ─────────────────────────────────────────────────────────────────────
@@ -355,12 +413,21 @@ def cleanup_audit():
 
 @bp.route('/api/audit/save-state', methods=['POST'])
 def save_audit_state():
-    """Persist comprehensive audit state to SessionManager."""
+    """
+    Persist audit state to disk (tab-scoped JSON) and session cache.
+    Disk file survives server restarts. Monolith: line 26604.
+    """
     try:
-        data = request.get_json() or {}
+        data     = request.get_json() or {}
+        tab_name = data.get('tab_name', 'default')
+        tab_slug = _re.sub(r'[^\w\-]', '_', tab_name)
+        _AUDIT_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+        out_path = _AUDIT_REPORTS_DIR / f'audit_state_{tab_slug}.json'
+        with open(out_path, 'w') as f:
+            json.dump(data, f, default=str)
         session.set('audit_state', json.dumps(data, default=str))
         session.set('audit_state_saved_at', datetime.now().isoformat())
-        return jsonify({'success': True, 'message': 'Audit state saved'})
+        return jsonify({'success': True, 'message': f'Audit state saved ({tab_name})'})
     except Exception as e:
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})
@@ -368,14 +435,27 @@ def save_audit_state():
 
 @bp.route('/api/audit/load-state', methods=['GET'])
 def load_audit_state():
-    """Restore previously saved audit state."""
+    """
+    Restore audit state from disk (tab-scoped). Falls back to session cache.
+    Monolith: line 26620.
+    """
     try:
+        tab_name  = request.args.get('tab', 'default')
+        tab_slug  = _re.sub(r'[^\w\-]', '_', tab_name)
+        file_path = _AUDIT_REPORTS_DIR / f'audit_state_{tab_slug}.json'
+        if file_path.exists():
+            with open(file_path, 'r') as f:
+                state = json.load(f)
+            saved_at = state.get('saved_at') or str(file_path.stat().st_mtime)
+            return jsonify({'success': True, 'state': state, 'saved_at': saved_at})
         raw = session.get('audit_state')
-        if not raw:
-            return jsonify({'success': False, 'error': 'No saved audit state found'})
-        state = json.loads(raw)
-        saved_at = session.get('audit_state_saved_at') or 'unknown'
-        return jsonify({'success': True, 'state': state, 'saved_at': saved_at})
+        if raw:
+            return jsonify({
+                'success':  True,
+                'state':    json.loads(raw),
+                'saved_at': session.get('audit_state_saved_at', 'unknown'),
+            })
+        return jsonify({'success': False, 'error': 'No saved audit state found'})
     except Exception as e:
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})

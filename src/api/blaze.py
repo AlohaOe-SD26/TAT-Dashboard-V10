@@ -55,6 +55,16 @@ from src.integrations.google_sheets import fetch_tax_rates
 # Utilities
 from src.utils.csv_resolver import load_sync_keys
 
+# ── Directory constants (monolith lines 1987, 1995, 2409, 2413–2414) ─────────
+_PROJECT_ROOT     = Path(__file__).resolve().parent.parent.parent
+BASE_DIR          = _PROJECT_ROOT
+REPORTS_DIR       = _PROJECT_ROOT / 'reports'
+AUDIT_REPORTS_DIR = REPORTS_DIR / 'AUDIT_REPORTS'
+BLAZE_REPORTS_DIR = REPORTS_DIR / 'BLAZE_CSV_REPORTS'
+INVENTORY_DIR     = BLAZE_REPORTS_DIR / 'INVENTORY'
+INVENTORY_DIR.mkdir(parents=True, exist_ok=True)
+AUDIT_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
 # ── Functions defined in monolith that haven't been extracted yet ─────────────
 # These are used by blaze.py routes. Defined here as local stubs until
 # a future extraction pass moves them to their proper modules.
@@ -97,31 +107,37 @@ def inject_mis_validation(driver, expected_data=None) -> None:
 
 class BlazeInventoryReporter:
     """
-    Blaze inventory reporting class. Monolith: line 6851.
-    Stub — full extraction is a future step. Provides interface compatibility
-    so inventory routes don't crash on import.
+    Blaze inventory reporting class. Monolith: lines 6851–7096.
+    GLOBAL_DATA substitutions applied:
+      GLOBAL_DATA['blaze']['inventory_logs']       → session.get/set('blaze_inventory_logs')
+      GLOBAL_DATA['blaze']['inventory_running']    → session.get/set('blaze_inventory_running')
+      GLOBAL_DATA['blaze']['inventory_start_time'] → session.get/set('blaze_inventory_start_time')
+      GLOBAL_DATA['blaze']['inventory_brands']     → session.get/set('blaze_inventory_brands')
+      GLOBAL_DATA['blaze']['inventory_data']       → session.set_blaze_inventory_df(df)
     """
-    def __init__(self):
+
+    def __init__(self) -> None:
         from src.session import session
         self.store_data: dict = {}
         self.brand_map: dict = {}
         self.keys: dict = self.load_keys()
         session.set('blaze_inventory_logs', [])
         session.set('blaze_inventory_running', True)
+        session.set('blaze_inventory_start_time', datetime.now().isoformat())
 
     def load_keys(self) -> dict:
         return load_sync_keys('default') or {}
 
     def log(self, msg: str) -> None:
         from src.session import session
-        logs = session.get('blaze_inventory_logs', [])
+        logs = session.get('blaze_inventory_logs') or []
         logs.append(msg)
         session.set('blaze_inventory_logs', logs)
         print(f"[INVENTORY] {msg}")
 
     def get_logs(self) -> list:
         from src.session import session
-        return session.get('blaze_inventory_logs', [])
+        return session.get('blaze_inventory_logs') or []
 
     def is_running(self) -> bool:
         from src.session import session
@@ -130,6 +146,173 @@ class BlazeInventoryReporter:
     def finish(self) -> None:
         from src.session import session
         session.set('blaze_inventory_running', False)
+        session.set('blaze_inventory_start_time', None)
+
+    def fetch_global_brands(self) -> None:
+        """Fetch global brand map (brandId → brandName). Monolith: line 6881."""
+        from src.session import session
+        try:
+            token = session.get('blaze_token') or ''
+            if not token:
+                self.log("WARNING: No token for brand fetch")
+                return
+            if isinstance(token, dict):
+                token = token.get('promo_token') or token.get('group_token') or ''
+            headers = {'Authorization': f'Token {token}', 'Accept': 'application/json'}
+            r = requests.get(
+                'https://api.blaze.me/api/v1/mgmt/brands?start=0&limit=500',
+                headers=headers, timeout=15
+            )
+            if r.ok:
+                brands = r.json().get('values', [])
+                self.brand_map = {b['id']: b.get('name', '') for b in brands}
+                session.set('blaze_inventory_brands', self.brand_map)
+                self.log(f"Loaded {len(self.brand_map)} brands")
+            else:
+                self.log(f"WARNING: Brand fetch failed ({r.status_code})")
+        except Exception as e:
+            self.log(f"WARNING: Brand fetch error: {e}")
+
+    def fetch_store_products(self, store_name: str, headers: dict) -> list:
+        """Fetch all products for a store via pagination. Monolith: line 6910."""
+        try:
+            all_products: list = []
+            start = 0
+            limit = 100
+            while True:
+                r = requests.get(
+                    f'https://api.blaze.me/api/v1/mgmt/products?start={start}&limit={limit}',
+                    headers=headers, timeout=30
+                )
+                if not r.ok:
+                    self.log(f"ERROR: Product fetch failed for {store_name} ({r.status_code})")
+                    break
+                data = r.json()
+                values = data.get('values', [])
+                all_products.extend(values)
+                if len(values) < limit:
+                    break
+                start += limit
+            self.log(f"Fetched {len(all_products)} products for {store_name}")
+            return all_products
+        except Exception as e:
+            self.log(f"ERROR: fetch_store_products failed: {e}")
+            return []
+
+    def normalize_products(self, products: list, store_name: str = '') -> pd.DataFrame:
+        """Normalize raw API product list to DataFrame. Monolith: line 6954."""
+        try:
+            rows = []
+            for p in products:
+                brand_id = p.get('brandId', '')
+                brand_name = self.brand_map.get(brand_id, brand_id)
+                rows.append({
+                    'Store':         store_name,
+                    'Product ID':    p.get('id', ''),
+                    'SKU':           p.get('sku', ''),
+                    'Name':          p.get('name', ''),
+                    'Brand':         brand_name,
+                    'Category':      p.get('category', {}).get('name', '') if isinstance(p.get('category'), dict) else '',
+                    'Price':         p.get('price', ''),
+                    'Cost':          p.get('cost', ''),
+                    'Stock':         p.get('quantityAvailable', ''),
+                    'Active':        p.get('active', ''),
+                    'Last Modified': p.get('updatedAt', ''),
+                })
+            return pd.DataFrame(rows)
+        except Exception as e:
+            self.log(f"ERROR: normalize_products failed: {e}")
+            return pd.DataFrame()
+
+    def run_report(self, target_store: str | None = None) -> bool:
+        """
+        Orchestrate full inventory report. Saves per-store CSV or multi-store Excel
+        to INVENTORY_DIR. Monolith: lines 7002–7096.
+        Uses try/finally to guarantee inventory_running is reset even on crash.
+        """
+        from src.session import session
+        try:
+            if not self.keys:
+                self.log("ERROR: No keys loaded. Aborting.")
+                return False
+
+            self.fetch_global_brands()
+
+            if target_store == 'ALL':
+                targets = self.keys
+            else:
+                targets = {k: v for k, v in self.keys.items() if k == target_store}
+
+            if not targets:
+                self.log(f"ERROR: Store '{target_store}' not found in keys file.")
+                return False
+
+            all_frames: list = []
+
+            for store_name, info in targets.items():
+                if not session.get('blaze_inventory_running'):
+                    self.log("STOPPED: Operation cancelled by user")
+                    break
+
+                headers = dict(info.get('full_headers_dump', {}))
+                headers['Accept'] = 'application/json, text/plain, */*'
+
+                raw = self.fetch_store_products(store_name, headers)
+                if raw:
+                    df = self.normalize_products(raw, store_name)
+                    self.store_data[store_name] = df
+                    all_frames.append(df)
+                else:
+                    self.log(f"WARNING: No data found for {store_name}")
+
+            if all_frames:
+                combined = pd.concat(all_frames, ignore_index=True)
+                session.set_blaze_inventory_df(combined)
+                self.log(f"SUCCESS: {len(combined)} total products loaded into memory")
+
+            if self.store_data:
+                timestamp = datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
+
+                if len(self.store_data) == 1:
+                    store_name = list(self.store_data.keys())[0]
+                    df = list(self.store_data.values())[0]
+                    safe = store_name.replace('The Artist Tree - ', '').replace('/', '-').replace(':', '')
+                    filename = f"{safe}_BLAZE_INVENTORY_{timestamp}.csv"
+                    filepath = INVENTORY_DIR / filename
+                    self.log(f"Saving CSV: {filename}...")
+                    try:
+                        df.to_csv(filepath, index=False)
+                        self.log(f"SUCCESS: Saved to {filepath}")
+                    except Exception as e:
+                        self.log(f"ERROR: Write failed: {e}")
+                else:
+                    filename = f"ALL_STORES_BLAZE_INVENTORY_{timestamp}.xlsx"
+                    filepath = INVENTORY_DIR / filename
+                    self.log(f"Saving multi-store Excel: {filename}...")
+                    try:
+                        with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
+                            for sname, df in self.store_data.items():
+                                safe = sname.replace('The Artist Tree - ', '').replace('/', '-')[:30]
+                                df.to_excel(writer, sheet_name=safe, index=False)
+                        self.log(f"SUCCESS: Saved to {filepath}")
+                    except Exception as e:
+                        self.log(f"ERROR: Write failed: {e}")
+
+                self.log("COMPLETE: Report generated successfully.")
+            else:
+                self.log("ERROR: No data collected.")
+
+            return True
+
+        except Exception as e:
+            self.log(f"CRITICAL ERROR: {e}")
+            self.log(f"Stack trace: {traceback.format_exc()}")
+            return False
+
+        finally:
+            session.set('blaze_inventory_running', False)
+            session.set('blaze_inventory_start_time', None)
+            self.log("[OK] State reset complete (inventory_running = False)")
 
 @bp.route('/api/blaze/refresh')
 def api_blaze_refresh():
@@ -1722,31 +1905,57 @@ def open_browser_to_dashboard():
     else:
         print("[ERROR] Browser init failed")
 
-def main():
-    print("="*70)
-    print("BLAZE MIS Audit Pro - Project 2 v12")
-    print("="*70)
-    print(f"[PROFILE] Active: {ACTIVE_PROFILE['handle']}")
-    print("[INFO] MULTI-DAY DEAL DETECTION ENABLED")
-    print("[INFO] DATE-AWARE CONFLICT AUDIT ENABLED")
-    print("[INFO] UP-DOWN PLANNING - Logic Gap & Split Management")
-    print("[INFO] 3 Main Tabs: Setup | Audit | BLAZE")
-    print(f"[INFO] Reports: {REPORTS_DIR}")
-    print("="*70)
+# ── main() removed — this is a Blueprint registered via src/app.py ────────────
 
-    session.set('blaze_inventory_running', False)  # Force clear lock on startup
-    
-    browser_thread = threading.Thread(target=open_browser_to_dashboard, daemon=True)
-    browser_thread.start()
-    
-    # Start background validation monitor
-    validation_monitor_thread = threading.Thread(target=background_validation_monitor, daemon=True)
-    validation_monitor_thread.start()
-    
-    print("[START] Starting Flask server on http://127.0.0.1:5100")
-    
-    # Run Flask without reloader to prevent duplicate threads
-    app.run(port=5100, debug=False, use_reloader=False)
+
+@bp.route('/api/debug/token-test', methods=['GET'])
+def api_debug_token_test():
+    """
+    Diagnostic: tests current Blaze token against shops, collections, promotions.
+    Access: http://127.0.0.1:5000/api/debug/token-test
+    Monolith: line 25403.
+    """
+    try:
+        from src.integrations.blaze_api import load_stored_token
+        token = session.get('blaze_token') or load_stored_token()
+        if not token:
+            return jsonify({'error': 'No token available', 'action': 'Login to Blaze first'})
+
+        test_token = (
+            token.get('promo_token') or token.get('group_token') or ''
+            if isinstance(token, dict) else str(token)
+        )
+        headers = {'Authorization': f'Token {test_token}'}
+        results: dict = {}
+
+        for name, url in [
+            ('shops',       'https://api.blaze.me/api/v1/mgmt/shops?start=0&limit=5'),
+            ('collections', 'https://api.blaze.me/api/v1/mgmt/smartcollections?start=0&limit=5'),
+            ('promotions',  'https://api.blaze.me/api/v1/mgmt/company/promotions?start=0&limit=5'),
+        ]:
+            try:
+                r = requests.get(url, headers=headers, timeout=10)
+                body   = r.json() if r.ok else {}
+                values = body.get('values', body) if isinstance(body, dict) else body
+                results[name] = {
+                    'status_code': r.status_code,
+                    'success':     r.ok,
+                    'count':       len(values) if isinstance(values, list) else 0,
+                    'sample':      values[:2]   if isinstance(values, list) else None,
+                    'error':       r.text[:200] if not r.ok else None,
+                }
+            except Exception as exc:
+                results[name] = {'error': str(exc)}
+
+        return jsonify({
+            'success':       True,
+            'token_preview': test_token[:12] + '...',
+            'results':       results,
+        })
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
 
 # ============================================================================
 #  FINAL ROBUST AUTOMATION (Human-Speed & Crash Proof)
