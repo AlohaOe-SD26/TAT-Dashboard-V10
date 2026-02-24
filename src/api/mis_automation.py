@@ -83,8 +83,20 @@ def init_all():
 
         driver = session.get_browser()
 
-        # 1. Browser
-        if not session.is_browser_ready():
+        # 1. Browser — guard: need both the flag AND a live driver object in memory.
+        # browser_ready can be stale-True in SQLite from a previous run while the
+        # actual WebDriver is gone, so we check both.
+        driver_alive = False
+        if driver is not None:
+            try:
+                _ = driver.window_handles  # lightweight liveness check
+                driver_alive = True
+            except Exception:
+                # Driver is dead (window was closed, Chrome crashed, etc.)
+                session.set_browser(None)
+                driver = None
+
+        if not driver_alive:
             driver = init_browser()
             if not driver:
                 return jsonify({'success': False, 'error': 'Failed to initialize browser'})

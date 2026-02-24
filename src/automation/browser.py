@@ -52,6 +52,34 @@ REPORTS_DIR.mkdir(exist_ok=True)
 MIS_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _get_chrome_profile_dir() -> str:
+    """
+    Return the active profile's Chrome directory.
+    Mirrors monolith: CHROME_PROFILE_DIR = ACTIVE_PROFILE['chrome_profile_dir'] (line 2217)
+    Falls back to a default dir if no profile is active.
+    """
+    try:
+        from src.session import session
+        profile = session.get_active_profile()
+        chrome_dir = profile.get('chrome_profile_dir')
+        if chrome_dir:
+            Path(chrome_dir).mkdir(parents=True, exist_ok=True)
+            return str(chrome_dir)
+    except Exception:
+        pass
+    # Fallback: default chrome dir
+    default = BASE_DIR / 'config' / 'chrome' / 'chrome_default'
+    default.mkdir(parents=True, exist_ok=True)
+    return str(default)
+
+
+# Dynamic property — always reads from active session profile
+# Used as: CHROME_PROFILE_DIR  (evaluated at call time via the function above)
+@property
+def _chrome_dir_stub():
+    return _get_chrome_profile_dir()
+
+
 
 
 def check_login_state(driver, tab_type: str) -> str:
@@ -305,7 +333,7 @@ def init_browser():
         print("[INIT] Launching Standard Chrome for Token Sniffing & Downloads...")
         
         options = webdriver.ChromeOptions()
-        options.add_argument(f'user-data-dir={CHROME_PROFILE_DIR}')
+        options.add_argument(f'user-data-dir={_get_chrome_profile_dir()}')
         options.add_argument('profile-directory=Default')
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')

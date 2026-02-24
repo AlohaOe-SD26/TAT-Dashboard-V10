@@ -309,7 +309,7 @@ def get_credentials():
                 'password': config.get('blaze_password', ''),
             },
             'google_sheet': {
-                'default_url': config.get('google_sheet_url', ''),
+                'default_url': config.get('google_sheet_url', '') or 'https://docs.google.com/spreadsheets/d/1StoJvRIdQp1xOD2sV1coY5H0XXXAo1GcbayP7zORrCI/edit?gid=1020060231#gid=1020060231',
             },
         }})
     except Exception as e:

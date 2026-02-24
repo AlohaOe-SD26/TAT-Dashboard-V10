@@ -20,6 +20,7 @@ from src.integrations.google_sheets import (
     extract_spreadsheet_id,
     get_available_tabs,
     fetch_google_sheet_data,
+    open_google_sheet_in_browser,
 )
 from src.utils.csv_resolver import resolve_mis_csv_for_route as resolve_mis_csv
 from src.utils.brand_helpers import manage_brand_list
@@ -45,6 +46,26 @@ def load_sheet():
         if not tabs:
             return jsonify({'success': False, 'error': 'No tabs found in spreadsheet'})
         return jsonify({'success': True, 'tabs': tabs, 'spreadsheet_id': spreadsheet_id})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@bp.route('/api/mis/init-sheet-page', methods=['POST'])
+def api_mis_init_sheet_page():
+    """Open a Google Sheet tab in the automated browser. Monolith: line 24372."""
+    try:
+        data = request.get_json()
+        tab_name = data.get('tab')
+        spreadsheet_id = session.get_spreadsheet_id()
+        if not spreadsheet_id:
+            return jsonify({'success': False, 'error': 'No spreadsheet loaded. Load a sheet first.'})
+        if not session.is_browser_ready():
+            return jsonify({'success': False, 'error': 'Browser not initialized. Click Initialize first.'})
+        session.set_mis_current_sheet(tab_name)
+        if open_google_sheet_in_browser(spreadsheet_id, tab_name):
+            return jsonify({'success': True, 'message': f'Opened tab "{tab_name}"'})
+        return jsonify({'success': False, 'error': 'Failed to open sheet in browser'})
     except Exception as e:
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})

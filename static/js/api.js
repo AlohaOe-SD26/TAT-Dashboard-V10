@@ -65,6 +65,7 @@ const api = {
     // ── MIS Sheet ─────────────────────────────────────────────────────────────
     sheet: {
         loadTabs:    (body) => apiPost('/api/mis/load-sheet', body),
+        initPage:    (body) => apiPost('/api/mis/init-sheet-page', body),
         openRow:     (body) => apiPost('/api/mis/open-sheet-row', body),
         pullCSV:     (body) => apiPost('/api/mis/pull-csv', body),
     },
