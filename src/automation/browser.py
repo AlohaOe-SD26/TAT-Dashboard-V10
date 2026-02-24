@@ -358,6 +358,18 @@ def init_browser(debug_port: int = 9222):
         # Verify we're connected — window_handles throws if attach failed
         _ = driver.window_handles
         print(f"[INIT] ✓ Attached to existing Chrome — {len(driver.window_handles)} tab(s) open")
+
+        # NOTE: add_experimental_option("prefs") is launch-time only — silently ignored
+        # on attach. Must set download directory via CDP instead.
+        try:
+            driver.execute_cdp_cmd('Page.setDownloadBehavior', {
+                'behavior':     'allow',
+                'downloadPath': str(MIS_REPORTS_DIR),
+            })
+            print(f"[INIT] ✓ Download directory set via CDP: {MIS_REPORTS_DIR}")
+        except Exception as cdp_err:
+            print(f"[INIT] ⚠ CDP download path set failed (non-fatal): {cdp_err}")
+
         session.set_browser(driver)
         session.set_browser_ready(True)
         return driver

@@ -57,6 +57,24 @@ GROUPS_FILE     = BASE_DIR / 'promotion_groups.json'
 BLAZE_TOKEN_FILE = BASE_DIR / 'blaze_token.json'
 
 
+# ── Group cache helpers (monolith: lines 3247–3256) ──────────────────────────
+# Added additively — scrape_blaze_data_from_browser() calls these at line 299.
+
+def load_groups() -> dict:
+    """Load promotion groups cache from disk."""
+    try:
+        with open(GROUPS_FILE, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_groups(groups_data: dict) -> None:
+    """Persist promotion groups cache to disk."""
+    with open(GROUPS_FILE, 'w') as f:
+        json.dump(groups_data, f, indent=2)
+
+
 def load_stored_token() -> Optional[str]:
     """Reads the Blaze API token from blaze_token.json. Monolith: line 3258."""
     try:
@@ -271,26 +289,57 @@ def scrape_blaze_data_from_browser():
     if not driver:
         return None, "Browser not initialized - cannot sniff token."
 
-    # --- HELPER: LOG SNIFFER ---
-    def sniff_token_from_logs(target_endpoint):
-        print(f"[TOKEN] Sniffing logs for endpoint: {target_endpoint}...")
+    # --- HELPER: LOG SNIFFER (dedicated Chrome — attached sessions have no perf log) ---
+    def sniff_token_via_dedicated_chrome() -> str | None:
+        """
+        Spawn a temporary, separate Chrome process with goog:loggingPrefs enabled.
+        Navigate to smart-collections, sniff the Authorization token from network logs,
+        then close the process. Never touches the user's attached session.
+        """
+        tmp_driver = None
         try:
-            logs = driver.get_log('performance')
+            from src.automation.browser import _get_chrome_profile_dir
+            sniff_opts = webdriver.ChromeOptions()
+            sniff_opts.add_argument(f'user-data-dir={_get_chrome_profile_dir()}')
+            sniff_opts.add_argument('profile-directory=Default')
+            sniff_opts.add_argument('--no-sandbox')
+            sniff_opts.add_argument('--disable-dev-shm-usage')
+            sniff_opts.add_argument('--disable-blink-features=AutomationControlled')
+            sniff_opts.add_argument('--log-level=3')
+            sniff_opts.add_experimental_option('excludeSwitches', ['enable-automation', 'enable-logging'])
+            sniff_opts.add_experimental_option('useAutomationExtension', False)
+            sniff_opts.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
+
+            print('[TOKEN] Launching dedicated sniff Chrome...')
+            tmp_driver = webdriver.Chrome(options=sniff_opts)
+            tmp_driver.get('https://retail.blaze.me/company-promotions/smart-collections')
+            time.sleep(6)
+
+            logs = tmp_driver.get_log('performance')
             for entry in logs:
                 try:
-                    message_obj = json.loads(entry['message'])
-                    message = message_obj.get('message', {})
-                    if message.get('method') == 'Network.requestWillBeSent':
-                        req = message['params']['request']
-                        url = req.get('url', '')
-                        if 'api.blaze.me' in url and target_endpoint in url:
-                            headers = req.get('headers', {})
-                            auth = next((v for k, v in headers.items() if k.lower() == 'authorization'), None)
+                    msg = json.loads(entry['message']).get('message', {})
+                    if msg.get('method') == 'Network.requestWillBeSent':
+                        req = msg['params']['request']
+                        if 'api.blaze.me' in req.get('url', '') and 'smartcollections' in req.get('url', ''):
+                            auth = next(
+                                (v for k, v in req.get('headers', {}).items()
+                                 if k.lower() == 'authorization'),
+                                None
+                            )
                             if auth and 'Token' in auth:
                                 return auth.replace('Token ', '').strip()
-                except: continue
+                except Exception:
+                    continue
         except Exception as e:
-            print(f"[WARN] Log sniff error: {e}")
+            print(f'[WARN] Dedicated sniff Chrome error: {e}')
+        finally:
+            if tmp_driver:
+                try:
+                    tmp_driver.quit()
+                    print('[TOKEN] Sniff Chrome closed.')
+                except Exception:
+                    pass
         return None
 
     # --- STEP 1: TEST EXISTING TOKEN ---
@@ -327,51 +376,18 @@ def scrape_blaze_data_from_browser():
             # We don't wipe 'colls' here so we preserve old names if scrape fails, 
             # but we force the scrape to try and get new ones.
 
-    # --- STEP 2: REDIRECT SEQUENCE (If needed) ---
+    # --- STEP 2: DEDICATED SNIFF CHROME (If needed) ---
     if not current_token:
-        print("[NAV] Token invalid or missing. Opening background tab to sniff...")
-        
-        # SAVE CURRENT TAB
-        try:
-            original_handle = driver.current_window_handle
-        except:
-            original_handle = driver.window_handles[0]
+        print("[NAV] Token invalid or missing. Launching dedicated sniff Chrome...")
+        collections_token = sniff_token_via_dedicated_chrome()
+        if collections_token:
+            print("[TOKEN] Captured fresh Collections Token!")
+            current_token = collections_token
+            save_stored_token(current_token)
+        else:
+            print("[WARN] Failed to capture token from dedicated sniff Chrome.")
 
-        # OPEN NEW TAB & SWITCH
-        driver.execute_script("window.open('about:blank', '_blank');")
-        time.sleep(0.5)
-        new_handle = driver.window_handles[-1]
-        driver.switch_to.window(new_handle)
-        
-        try:
-            # A. Go to Smart Collections to generate the right traffic
-            print("[NAV] Redirecting to Smart Collections page (Background)...")
-            driver.get("https://retail.blaze.me/company-promotions/smart-collections")
-            time.sleep(6) # Wait for page load & API calls
-            
-            # B. Sniff specifically for the smartcollections endpoint
-            collections_token = sniff_token_from_logs('smartcollections')
-            
-            if collections_token:
-                print("[TOKEN] captured fresh Collections Token!")
-                current_token = collections_token
-                save_stored_token(current_token)
-            else:
-                print("[WARN] Failed to capture token even after redirect.")
-        
-        except Exception as e:
-            print(f"[ERROR] Background sniff failed: {e}")
-            
-        finally:
-            # C. CLOSE TAB & RETURN
-            print("[NAV] Closing background tab and returning...")
-            try:
-                driver.close()
-                driver.switch_to.window(original_handle)
-            except:
-                print("[WARN] Could not switch back to original tab")
-
-        # D. Fetch Data with new token
+        # Fetch data with new token
         if current_token:
             shops, new_colls, raw_promos = get_api_data(current_token)
             if new_colls:
@@ -966,4 +982,3 @@ class BlazeTokenManager:
         except Exception as e:
             print(f"[BRANDS] ERROR: Fetch failed: {e}")
             return {}
-
