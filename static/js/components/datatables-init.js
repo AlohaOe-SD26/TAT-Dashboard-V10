@@ -438,11 +438,10 @@ async function pullMisCsv(btn) {
         const misUsername = document.getElementById('mis-username').value;
         const misPassword = document.getElementById('mis-password').value;
         
-        const response = await api.sheet.pullCSV({
+        const data = await api.sheet.pullCSV({
                 mis_username: misUsername,
                 mis_password: misPassword
             });
-        const data = await response.json();
         
         if (data.success) {
             misData.localPath = data.path;
@@ -498,9 +497,12 @@ async function initializeAllSystems(btnElement) {
             });
         
         if (data.success) {
-            document.getElementById('init-status').innerHTML = '<p class="alert alert-success">' + data.message + '</p>';
-            
-            if (data.message.includes("Blaze login successful")) {
+            const misStatus   = data.mis_login   ? '✅ MIS login OK'   : '⚠️ MIS login skipped/failed';
+            const blazeStatus = data.blaze_login  ? '✅ Blaze login OK' : '⚠️ Blaze login skipped/failed';
+            document.getElementById('init-status').innerHTML =
+                `<p class="alert alert-success">Browser initialized.<br>${misStatus}<br>${blazeStatus}</p>`;
+
+            if (data.blaze_login) {
                 console.log("Triggering ONE-TIME auto-fetch for Blaze...");
                 const blazeBtn = document.querySelector("button[onclick='fetchBlazeData()']");
                 if (blazeBtn) blazeBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Auto-Syncing...';
