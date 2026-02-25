@@ -72,8 +72,8 @@ class SessionManager:
         elif db_path is not None:
             self._backend = SQLiteBackend(db_path=db_path)
         else:
-            # Absolute fallback: in-memory SQLite (tests / no-config startup)
-            self._backend = SQLiteBackend(db_path=Path.cwd() / 'config' / 'session.db')
+            # Absolute fallback: SQLite at project root / config / session.db
+            self._backend = SQLiteBackend(db_path=Path(__file__).resolve().parent.parent.parent / 'config' / 'session.db')
 
         self._lock = threading.Lock()
         self._volatile: dict[str, Any] = {

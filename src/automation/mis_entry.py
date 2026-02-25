@@ -591,39 +591,45 @@ def automate_full_end_date(driver: Any, payload: dict, session: Any = None) -> d
     return result
 
 
-# ── pull_mis_csv_report_background ────────────────────────────────────────────
-# Monolith: line 24939. Appended additively — no existing code modified.
-
+# ── Additive: pull_mis_csv_report_background (monolith: lines 24982–25192) ───
 def pull_mis_csv_report_background(driver: Any) -> tuple[bool, str, str]:
     """
-    Background CSV pull: navigates to MIS daily-discount, ensures ALL rows visible,
-    downloads CSV with smart validation and retry logic.
-
-    Returns: (success: bool, path_or_error: str, filename: str)
+    Background CSV pull — uses provided driver directly.
+    Smart Validation & Retry Logic:
+    - Verifies table is fully populated before clicking CSV button
+    - Validates downloaded file size (< 1KB = misfire/empty)
+    - Retries up to 3 times; falls back to ~/Downloads if CDP redirect missed.
+    Returns: (success, path_or_error, filename)
     """
-    import os
     from pathlib import Path as _Path
-    from selenium.webdriver.support.ui import WebDriverWait, Select
-    from selenium.webdriver.support import expected_conditions as EC
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.common.keys import Keys
-    from selenium.common.exceptions import TimeoutException
+    import os as _os
+    import time as _time
+    import traceback as _traceback
+    from datetime import datetime as _datetime
 
-    _MIS_REPORTS_DIR = _Path(__file__).resolve().parent.parent.parent / 'reports' / 'MIS_CSV_REPORTS'
-    _MIS_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    def _log(msg: str, level: str = 'INFO') -> None:
+        tag = f'[{_datetime.now().strftime("%H:%M:%S")}] [{level}] [MIS CSV]'
+        print(f'{tag} {msg}')
 
     if not driver:
         return False, 'Browser not ready', ''
 
+    _MIS_REPORTS_DIR = _Path(__file__).resolve().parent.parent.parent / 'reports' / 'MIS_CSV_REPORTS'
+    _MIS_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     MAX_RETRY_ATTEMPTS = 3
-    MIN_VALID_FILE_SIZE = 1024  # 1KB minimum for valid CSV
+    MIN_VALID_FILE_SIZE = 1024
 
     try:
-        # Already on MIS tab from execute_in_background — wait for page ready
-        time.sleep(2)
+        from selenium.webdriver.support.ui import WebDriverWait, Select
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.common.keys import Keys
+        from selenium.common.exceptions import TimeoutException
+
+        _time.sleep(2)
 
         # 1. Clear search bar
-        _log('[MIS CSV] Clearing search bar...')
+        _log('Clearing search bar...')
         search_input = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.CSS_SELECTOR, "input[type='search']"))
         )
@@ -632,34 +638,34 @@ def pull_mis_csv_report_background(driver: Any) -> tuple[bool, str, str]:
         search_input.send_keys(Keys.DELETE)
 
         # 2. Set table to show ALL entries
-        _log('[MIS CSV] Verifying table length setting...')
+        _log('Verifying table length setting...')
         try:
-            dropdown_element = WebDriverWait(driver, 5).until(
+            dropdown = WebDriverWait(driver, 5).until(
                 EC.presence_of_element_located((By.NAME, 'daily-discount_length'))
             )
-            sel = Select(dropdown_element)
+            sel = Select(dropdown)
             if sel.first_selected_option.get_attribute('value') != '-1':
-                _log('[MIS CSV] Switching view to All entries...')
+                _log('Switching to ALL entries...')
                 sel.select_by_value('-1')
                 try:
                     WebDriverWait(driver, 30).until_not(
                         EC.presence_of_element_located((By.CSS_SELECTOR, 'td.dataTables_empty'))
                     )
                 except TimeoutException:
-                    _log('[MIS CSV] Spinner timeout, proceeding...', 'WARN')
+                    _log('Spinner timeout, proceeding...', 'WARN')
         except Exception as e:
-            _log(f'[MIS CSV] Table setup error: {e}', 'WARN')
+            _log(f'Table setup error: {e}', 'WARN')
 
+        # 3. Verify table populated
         def _table_populated() -> bool:
             try:
                 for cell in driver.find_elements(By.CSS_SELECTOR, 'td.dataTables_empty'):
-                    if cell.is_displayed() and any(
-                        kw in cell.text.lower() for kw in ('loading', 'no data', 'processing')
-                    ):
-                        return False
+                    if cell.is_displayed():
+                        t = cell.text.lower()
+                        if 'loading' in t or 'no data' in t or 'processing' in t:
+                            return False
                 rows = driver.find_elements(
-                    By.CSS_SELECTOR, '#daily-discount tbody tr:not(.dataTables_empty)'
-                )
+                    By.CSS_SELECTOR, '#daily-discount tbody tr:not(.dataTables_empty)')
                 if not rows:
                     return False
                 for row in rows[:3]:
@@ -670,50 +676,47 @@ def pull_mis_csv_report_background(driver: Any) -> tuple[bool, str, str]:
             except Exception:
                 return False
 
-        _log('[MIS CSV] Waiting for table to be fully populated...')
-        for wait_attempt in range(15):
+        _log('Waiting for table to be fully populated...')
+        for i in range(15):
             if _table_populated():
-                row_count = len(driver.find_elements(
-                    By.CSS_SELECTOR, '#daily-discount tbody tr:not(.dataTables_empty)'
-                ))
-                _log(f'[MIS CSV] Table populated with {row_count} rows')
+                rc = len(driver.find_elements(
+                    By.CSS_SELECTOR, '#daily-discount tbody tr:not(.dataTables_empty)'))
+                _log(f'Table populated with {rc} rows')
                 break
-            time.sleep(1)
-            if wait_attempt == 14:
-                _log('[MIS CSV] Table population timeout, proceeding anyway...', 'WARN')
+            _time.sleep(1)
+            if i == 14:
+                _log('Table population timeout, proceeding...', 'WARN')
 
-        time.sleep(1)
+        _time.sleep(1)
 
-        # Retry loop — download with size validation
+        # 4. Download loop with dual-dir watcher + retry
         for attempt in range(1, MAX_RETRY_ATTEMPTS + 1):
-            _log(f'[MIS CSV] Download attempt {attempt}/{MAX_RETRY_ATTEMPTS}...')
+            _log(f'Download attempt {attempt}/{MAX_RETRY_ATTEMPTS}...')
 
-            # Watch MIS_CSV_REPORTS primarily; fall back to user Downloads if CDP
-            # download redirect didn't take (Browser.setDownloadBehavior unsupported).
             _downloads_dir = _Path.home() / 'Downloads'
             _watch_dirs: list = [_MIS_REPORTS_DIR]
             if _downloads_dir.exists() and _downloads_dir.resolve() != _MIS_REPORTS_DIR.resolve():
                 _watch_dirs.append(_downloads_dir)
-            existing_by_dir = {d: set(os.listdir(d)) for d in _watch_dirs if d.exists()}
+            existing_by_dir = {d: set(_os.listdir(d)) for d in _watch_dirs if d.exists()}
 
             csv_btn = WebDriverWait(driver, 10).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, 'button.buttons-csv'))
             )
             driver.execute_script('arguments[0].click();', csv_btn)
-            _log('[MIS CSV] Waiting for download...')
+            _log('Waiting for download...')
 
-            new_file_path = None
+            new_file_path: _Path | None = None
             for _ in range(30):
-                time.sleep(1)
+                _time.sleep(1)
                 for watch_dir in _watch_dirs:
                     if not watch_dir.exists():
                         continue
-                    new_files = set(os.listdir(watch_dir)) - existing_by_dir.get(watch_dir, set())
+                    new_files = set(_os.listdir(watch_dir)) - existing_by_dir.get(watch_dir, set())
                     for f in new_files:
                         if (f.endswith('.csv') or f.endswith('.xlsx')) and not f.endswith('.crdownload'):
                             new_file_path = watch_dir / f
                             if watch_dir != _MIS_REPORTS_DIR:
-                                _log(f'[MIS CSV] File landed in {watch_dir} (CDP missed) — will move to reports dir.')
+                                _log(f'File landed in {watch_dir} (CDP missed) — moving to reports dir.')
                             break
                     if new_file_path:
                         break
@@ -721,53 +724,56 @@ def pull_mis_csv_report_background(driver: Any) -> tuple[bool, str, str]:
                     break
 
             if not new_file_path:
-                _log(f'[MIS CSV] Download timed out on attempt {attempt}', 'WARN')
+                _log(f'Download timed out on attempt {attempt}', 'WARN')
                 if attempt < MAX_RETRY_ATTEMPTS:
                     driver.refresh()
-                    time.sleep(3)
-                    continue
-                return False, 'Download timed out after all retry attempts', ''
-
-            time.sleep(0.5)
-            file_size = os.path.getsize(new_file_path)
-            _log(f'[MIS CSV] Downloaded file size: {file_size} bytes')
-
-            if file_size < MIN_VALID_FILE_SIZE:
-                _log(f'[MIS CSV] Misfire — file too small ({file_size}B), retrying...', 'WARN')
-                try:
-                    os.remove(new_file_path)
-                except Exception:
-                    pass
-                if attempt < MAX_RETRY_ATTEMPTS:
-                    time.sleep(3)
-                    driver.refresh()
-                    time.sleep(3)
+                    _time.sleep(3)
                     for _ in range(10):
                         if _table_populated():
                             break
-                        time.sleep(1)
+                        _time.sleep(1)
+                    continue
+                return False, 'Download timed out after all retry attempts', ''
+
+            _time.sleep(0.5)
+            file_size = _os.path.getsize(new_file_path)
+            _log(f'Downloaded file size: {file_size} bytes')
+
+            if file_size < MIN_VALID_FILE_SIZE:
+                _log(f'MISFIRE — file too small ({file_size} bytes)', 'WARN')
+                try:
+                    _os.remove(new_file_path)
+                except Exception:
+                    pass
+                if attempt < MAX_RETRY_ATTEMPTS:
+                    _time.sleep(3)
+                    driver.refresh()
+                    _time.sleep(3)
+                    for _ in range(10):
+                        if _table_populated():
+                            break
+                        _time.sleep(1)
                     continue
                 return False, f'Download misfire (empty file) after {MAX_RETRY_ATTEMPTS} attempts', ''
 
             # Success
-            now = datetime.now()
+            now        = _datetime.now()
             final_name = f"MIS_CSV_REPORT_{now.strftime('%Y-%m-%d')}_{now.strftime('%I-%M-%S-%p')}.csv"
             final_path = _MIS_REPORTS_DIR / final_name
             if final_path.exists():
-                os.remove(final_path)
-            time.sleep(0.5)
+                _os.remove(final_path)
+            _time.sleep(0.5)
             try:
-                os.rename(new_file_path, final_path)
+                _os.rename(new_file_path, final_path)
             except OSError:
-                # Cross-device move (e.g. Downloads on C:, reports on D:) — use shutil
                 import shutil as _shutil
                 _shutil.move(str(new_file_path), str(final_path))
-            _log(f'[MIS CSV] Report ready: {final_name} ({file_size} bytes)')
+            _log(f'Report ready: {final_name} ({file_size} bytes)')
             return True, str(final_path), final_name
 
         return False, 'Unknown error during CSV download', ''
 
     except Exception as e:
-        _log(f'[MIS CSV] Pull failed: {e}', 'ERROR')
-        traceback.print_exc()
+        _log(f'Pull failed: {e}', 'ERROR')
+        _traceback.print_exc()
         return False, f'Error: {str(e)}', ''

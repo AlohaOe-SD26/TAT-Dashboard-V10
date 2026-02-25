@@ -171,24 +171,20 @@ def download_csv():
         traceback.print_exc()
         return str(e), 500
 
+
 _MIS_REPORTS_DIR = Path(__file__).resolve().parent.parent.parent / 'reports' / 'MIS_CSV_REPORTS'
 
 
 @bp.route('/api/mis/pull-csv', methods=['POST'])
 def pull_csv():
-    """
-    Pull MIS CSV in background without switching the user's visible tab.
-    Delegates to execute_in_background + pull_mis_csv_report_background.
-    Monolith: line 25375.
-    """
+    """Pull MIS CSV in background via browser automation. Monolith: line 25375."""
+    import time as _time
     try:
         from src.automation.browser import execute_in_background
         from src.automation.mis_entry import pull_mis_csv_report_background
-
         data         = request.get_json() or {}
         gui_username = data.get('mis_username', '').strip()
         gui_password = data.get('mis_password', '').strip()
-
         _MIS_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
         def pull_operation(driver):
@@ -197,19 +193,17 @@ def pull_csv():
         result = execute_in_background('mis', pull_operation,
                                        gui_username=gui_username,
                                        gui_password=gui_password)
-
         if result['success']:
             success, path, filename = result['result']
             if success:
-                session.set_mis_csv_filepath(path)
-                session.set_mis_csv_filename(filename)
+                session.set('mis_csv_filepath', path)
+                session.set('mis_csv_filename', filename)
                 print(f"[CSV-PULL] Stored in session: {filename}")
                 return jsonify({'success': True, 'path': path, 'filename': filename})
             else:
-                return jsonify({'success': False, 'error': path})  # path = error msg on failure
+                return jsonify({'success': False, 'error': path})
         else:
             return jsonify({'success': False, 'error': result.get('error', 'Unknown error')})
-
     except Exception as e:
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})
@@ -477,5 +471,53 @@ def apply_split_id():
 
 @bp.route('/api/mis/search-brand', methods=['POST'])
 def search_brand():
-    """Delegate to mis_automation blueprint for Selenium search."""
-    return jsonify({'success': False, 'error': 'Use /api/mis/search-brand via automation blueprint'}), 308
+    """Search MIS table for a brand via Selenium. Monolith: line 27733."""
+    import time as _time
+    try:
+        from src.automation.browser import ensure_mis_ready
+        from src.api.profiles import load_profile_credentials
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.common.keys import Keys
+
+        data   = request.get_json() or {}
+        brand  = data.get('brand', '').strip()
+        driver = session.get_browser()
+        if not driver:
+            return jsonify({'success': False, 'error': 'Browser not initialized. Click Initialize first.'})
+
+        creds    = load_profile_credentials(session.get_active_handle()) or {}
+        mis_user = creds.get('mis_username', '')
+        mis_pass = creds.get('mis_password', '')
+        try:
+            ensure_mis_ready(driver, mis_user, mis_pass)
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)})
+
+        # Close any open modal that might block the search input
+        try:
+            for btn in driver.find_elements(By.CSS_SELECTOR, "button.close[data-dismiss='modal']"):
+                if btn.is_displayed():
+                    btn.click()
+                    _time.sleep(0.3)
+                    break
+        except Exception:
+            pass
+
+        try:
+            search_input = WebDriverWait(driver, 3).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "input[type='search']"))
+            )
+            search_input.click()
+            search_input.send_keys(Keys.CONTROL + 'a')
+            search_input.send_keys(Keys.DELETE)
+            search_input.send_keys(brand)
+            search_input.send_keys(Keys.RETURN)
+            return jsonify({'success': True})
+        except Exception as e:
+            return jsonify({'success': False, 'error': f'Search failed: {str(e)}'})
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})

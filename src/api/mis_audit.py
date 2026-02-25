@@ -35,17 +35,15 @@ _AUDIT_REPORTS_DIR = Path(__file__).resolve().parent.parent.parent / 'reports' /
 @bp.route('/api/mis/audit', methods=['POST'])
 def api_mis_audit():
     """
-    Legacy-compatible audit route called by the 'Run Audit' button.
-    Returns results keyed by section {weekly, monthly, sale} for displayAuditResults() in blaze.js:648.
-    NOT the same as /api/mis/maudit (different response shape). Monolith: line 26519.
+    Legacy audit route called by the 'Run Audit' button.
+    Returns {weekly, monthly, sale} keyed results for displayAuditResults().
+    Monolith: line 26519.
     """
     try:
         tab_name = request.form.get('tab')
         csv_file = request.files.get('csv')
-
         if not tab_name:
             return jsonify({'success': False, 'error': 'No tab selected'})
-
         mis_df = None
         if csv_file:
             mis_df = pd.read_csv(csv_file)
@@ -54,32 +52,23 @@ def api_mis_audit():
             if pulled_path and Path(pulled_path).exists():
                 mis_df = pd.read_csv(pulled_path)
             else:
-                return jsonify({'success': False,
-                                'error': 'No CSV available. Pull or upload CSV first.'})
-
+                return jsonify({'success': False, 'error': 'No CSV available. Pull or upload CSV first.'})
         sections_data = fetch_google_sheet_data(tab_name)
         if all(df.empty for df in sections_data.values()):
             return jsonify({'success': False, 'error': 'No data found in selected tab'})
-
         bmap = session.get_mis_bracket_map()
         pmap = session.get_mis_prefix_map()
-
         all_results: dict[str, list] = {}
         for section in ('weekly', 'monthly', 'sale'):
             df = sections_data.get(section, pd.DataFrame())
             if not df.empty:
                 sr = run_maudit(df, mis_df, section, bmap, pmap)
-                # Flatten all buckets into one list per section for displayAuditResults()
                 all_results[section] = (
-                    sr.get('mismatches', []) +
-                    sr.get('not_found', []) +
-                    sr.get('missing_id', [])
+                    sr.get('mismatches', []) + sr.get('not_found', []) + sr.get('missing_id', [])
                 )
             else:
                 all_results[section] = []
-
         return jsonify({'success': True, 'results': all_results})
-
     except Exception as e:
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})
@@ -413,10 +402,7 @@ def cleanup_audit():
 
 @bp.route('/api/audit/save-state', methods=['POST'])
 def save_audit_state():
-    """
-    Persist audit state to disk (tab-scoped JSON) and session cache.
-    Disk file survives server restarts. Monolith: line 26604.
-    """
+    """Persist audit state to disk (tab-scoped JSON) + session cache. Monolith: line 26604."""
     try:
         data     = request.get_json() or {}
         tab_name = data.get('tab_name', 'default')
@@ -435,10 +421,7 @@ def save_audit_state():
 
 @bp.route('/api/audit/load-state', methods=['GET'])
 def load_audit_state():
-    """
-    Restore audit state from disk (tab-scoped). Falls back to session cache.
-    Monolith: line 26620.
-    """
+    """Restore audit state from disk (tab-scoped). Falls back to session. Monolith: line 26620."""
     try:
         tab_name  = request.args.get('tab', 'default')
         tab_slug  = _re.sub(r'[^\w\-]', '_', tab_name)
@@ -450,11 +433,8 @@ def load_audit_state():
             return jsonify({'success': True, 'state': state, 'saved_at': saved_at})
         raw = session.get('audit_state')
         if raw:
-            return jsonify({
-                'success':  True,
-                'state':    json.loads(raw),
-                'saved_at': session.get('audit_state_saved_at', 'unknown'),
-            })
+            return jsonify({'success': True, 'state': json.loads(raw),
+                            'saved_at': session.get('audit_state_saved_at', 'unknown')})
         return jsonify({'success': False, 'error': 'No saved audit state found'})
     except Exception as e:
         traceback.print_exc()
@@ -463,14 +443,30 @@ def load_audit_state():
 
 @bp.route('/api/audit/export', methods=['POST'])
 def export_audit():
-    """Export audit results to a file (JSON for now; Excel in Step 7)."""
+    """Export audit results to downloadable CSV file. Monolith: line 26630."""
+    import csv, io
+    from flask import Response
     try:
-        data     = request.get_json() or {}
-        results  = data.get('results', {})
-        filename = f"audit_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-
-        out = json.dumps(results, indent=2, default=str)
-        return jsonify({'success': True, 'data': json.loads(out), 'filename': filename})
+        data    = request.get_json() or {}
+        results = data.get('results', {})
+        rows: list = []
+        for section, items in results.items():
+            for item in (items if isinstance(items, list) else []):
+                row = dict(item)
+                row['section'] = section
+                rows.append(row)
+        if not rows:
+            return jsonify({'success': False, 'error': 'No results to export'})
+        filename = f"audit_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+        writer.writeheader()
+        writer.writerows(rows)
+        return Response(
+            output.getvalue(),
+            mimetype='text/csv',
+            headers={'Content-Disposition': f'attachment; filename={filename}'}
+        )
     except Exception as e:
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})

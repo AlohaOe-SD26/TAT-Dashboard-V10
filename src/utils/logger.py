@@ -1,69 +1,72 @@
-# src/utils/logger.py - v1.0
-# pip install flask
-# Hybrid logger: standard logging to file (silent errors/state),
-# print() to stdout (runtime console feedback for headless ops).
-# Call get_logger(__name__) in any module.
+# src/utils/logger.py
+# ─────────────────────────────────────────────────────────────────────────────
+# Centralized logging setup for BLAZE MIS Audit Pro.
+# Path.cwd() removed — log path anchored to __file__ (Issue M-2).
+# ─────────────────────────────────────────────────────────────────────────────
 
-from pathlib import Path
+from __future__ import annotations
+
 import logging
 import sys
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+from typing import Optional
+
+# M-2 fix: anchored to project root via __file__, not Path.cwd()
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_DEFAULT_LOG_DIR = _PROJECT_ROOT / 'logs'
 
 
-def get_logger(name: str, log_dir: str = 'logs') -> logging.Logger:
+def setup_logger(
+    name:      str = 'blaze_mis',
+    log_dir:   str = 'logs',
+    log_file:  str = 'app.log',
+    level:     int = logging.INFO,
+    max_bytes: int = 5 * 1024 * 1024,
+    backup_count: int = 3,
+) -> logging.Logger:
     """
-    Return a configured logger that writes to both a rotating log file
-    and stdout. The file handler captures WARNING+ silently.
-    The stream handler captures INFO+ for console visibility.
-
-    Args:
-        name:    Module name (pass __name__).
-        log_dir: Directory for log files. Created if missing.
-
-    Returns:
-        Configured logging.Logger instance.
+    Set up and return a named logger with both file and console handlers.
+    log_dir is resolved relative to the project root (not cwd).
     """
-    log_path = Path.cwd() / log_dir
+    # M-2 fix: project-root-relative, not cwd-relative
+    log_path = _PROJECT_ROOT / log_dir
     log_path.mkdir(parents=True, exist_ok=True)
 
     logger = logging.getLogger(name)
-
     if logger.handlers:
-        # Already configured — avoid duplicate handlers on re-import
+        # Already configured in this process — return as-is
         return logger
 
-    logger.setLevel(logging.DEBUG)
-
-    # ── File handler — WARNING and above ────────────────────────────────────
-    file_handler = logging.FileHandler(
-        log_path / 'app.log', encoding='utf-8'
+    logger.setLevel(level)
+    formatter = logging.Formatter(
+        fmt='[%(asctime)s] %(levelname)s %(name)s: %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
     )
-    file_handler.setLevel(logging.WARNING)
-    file_handler.setFormatter(logging.Formatter(
-        '%(asctime)s | %(levelname)-8s | %(name)s | %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    ))
 
-    # ── Stream handler — INFO and above (console) ────────────────────────────
-    stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setLevel(logging.INFO)
-    stream_handler.setFormatter(logging.Formatter(
-        '[%(name)s] %(message)s'
-    ))
+    # Rotating file handler
+    fh = RotatingFileHandler(
+        log_path / log_file,
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding='utf-8',
+    )
+    fh.setFormatter(formatter)
+    fh.setLevel(level)
+    logger.addHandler(fh)
 
-    logger.addHandler(file_handler)
-    logger.addHandler(stream_handler)
+    # Console handler (print-level — always INFO or higher)
+    ch = logging.StreamHandler(sys.stdout)
+    ch.setFormatter(formatter)
+    ch.setLevel(logging.INFO)
+    logger.addHandler(ch)
 
     return logger
 
 
-def console_log(label: str, message: str) -> None:
-    """
-    Convenience print() wrapper for timestamped runtime console output.
-    Use for headless ops where you want immediate visual feedback.
-    This intentionally uses print() not logging, per the hybrid logging standard.
-
-    Example:
-        console_log('MATCHER', 'Processing weekly section — 42 rows')
-        # Outputs: [MATCHER] Processing weekly section — 42 rows
-    """
-    print(f"[{label.upper()}] {message}")
+def get_logger(name: str = 'blaze_mis') -> logging.Logger:
+    """Return an existing logger or create one with defaults."""
+    logger = logging.getLogger(name)
+    if not logger.handlers:
+        return setup_logger(name)
+    return logger

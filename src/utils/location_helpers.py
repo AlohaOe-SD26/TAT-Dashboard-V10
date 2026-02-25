@@ -1,62 +1,78 @@
-# =============================================================================
 # src/utils/location_helpers.py
-# Step 3: Pure utility extraction from main_-_bloat.py — zero logic changes.
-# Contains: parse_locations, resolve_to_store_set, calculate_location_conflict, format_location_set, format_location_display, format_csv_locations, resolve_location_columns, find_locations_value, convert_store_name_to_data_cy
-# =============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
+# Location/store name utilities extracted from main_-_bloat.py.
+# GLOBAL_DATA references replaced with session calls (Issue C-2).
+# normalize_store_name is the CANONICAL definition for the entire codebase (M-4).
+# All other modules should import from here.
+# ─────────────────────────────────────────────────────────────────────────────
+
+from __future__ import annotations
+
 import re
-from typing import Dict, List, Optional, Tuple, Any, Set, FrozenSet
+from typing import Tuple, Optional
+
 import pandas as pd
 
-# ── Store Constants (Single Source of Truth) ─────────────────────────────────
+# ── Store constants (monolith: lines 2803–2856) ───────────────────────────────
 
-STORE_MAPPING: Dict[str, str] = {
+STORE_MAPPING: dict[str, str] = {
+    # Raw "The Artist Tree - X" → canonical Google Sheet name
     "The Artist Tree - West Hollywood": "West Hollywood",
-    "The Artist Tree - Beverly Hills": "Beverly Hills",
-    "The Artist Tree - Beverly": "Beverly Hills",
-    "The Artist Tree - Koreatown": "Koreatown",
-    "The Artist Tree - Riverside": "Riverside",
-    "The Artist Tree - Fresno": "Fresno (Palm)",
-    "The Artist Tree - Fresno Palm": "Fresno (Palm)",
-    "The Artist Tree - Fresno Shaw": "Fresno (Shaw)",
-    "The Artist Tree - Oxnard": "Oxnard",
-    "The Artist Tree - El Sobrante": "El Sobrante",
-    "The Artist Tree - Laguna Woods": "Laguna Woods",
-    "The Artist Tree - Hawthorne": "Hawthorne",
-    "The Artist Tree - Dixon": "Dixon",
-    "The Artist Tree - Davis": "Davis",
-    "West Hollywood": "West Hollywood",
-    "Beverly": "Beverly Hills",
-    "Beverly Hills": "Beverly Hills",
-    "Koreatown": "Koreatown",
-    "Riverside": "Riverside",
-    "Fresno": "Fresno (Palm)",
-    "Fresno Palm": "Fresno (Palm)",
-    "Fresno (Palm)": "Fresno (Palm)",
-    "Fresno Shaw": "Fresno (Shaw)",
-    "Fresno (Shaw)": "Fresno (Shaw)",
-    "Oxnard": "Oxnard",
-    "El Sobrante": "El Sobrante",
-    "Laguna Woods": "Laguna Woods",
-    "Hawthorne": "Hawthorne",
-    "Dixon": "Dixon",
-    "Davis": "Davis",
+    "The Artist Tree - Beverly Hills":  "Beverly Hills",
+    "The Artist Tree - Beverly":        "Beverly Hills",
+    "The Artist Tree - Koreatown":      "Koreatown",
+    "The Artist Tree - Riverside":      "Riverside",
+    "The Artist Tree - Fresno":         "Fresno (Palm)",
+    "The Artist Tree - Fresno Palm":    "Fresno (Palm)",
+    "The Artist Tree - Fresno Shaw":    "Fresno (Shaw)",
+    "The Artist Tree - Oxnard":         "Oxnard",
+    "The Artist Tree - El Sobrante":    "El Sobrante",
+    "The Artist Tree - Laguna Woods":   "Laguna Woods",
+    "The Artist Tree - Hawthorne":      "Hawthorne",
+    "The Artist Tree - Dixon":          "Dixon",
+    "The Artist Tree - Davis":          "Davis",
+    # Short MIS CSV variations
+    "West Hollywood":  "West Hollywood",
+    "Beverly":         "Beverly Hills",
+    "Beverly Hills":   "Beverly Hills",
+    "Koreatown":       "Koreatown",
+    "Riverside":       "Riverside",
+    "Fresno":          "Fresno (Palm)",
+    "Fresno Palm":     "Fresno (Palm)",
+    "Fresno (Palm)":   "Fresno (Palm)",
+    "Fresno Shaw":     "Fresno (Shaw)",
+    "Fresno (Shaw)":   "Fresno (Shaw)",
+    "Oxnard":          "Oxnard",
+    "El Sobrante":     "El Sobrante",
+    "Laguna Woods":    "Laguna Woods",
+    "Hawthorne":       "Hawthorne",
+    "Dixon":           "Dixon",
+    "Davis":           "Davis",
 }
 
-_STORE_MAPPING_LOWER: Dict[str, str] = {k.lower(): v for k, v in STORE_MAPPING.items()}
+_STORE_MAPPING_LOWER: dict[str, str] = {k.lower(): v for k, v in STORE_MAPPING.items()}
 
-ALL_STORES_SET: frozenset = frozenset([
+ALL_STORES_SET: frozenset[str] = frozenset([
     "Davis", "Dixon", "Beverly Hills", "El Sobrante",
     "Fresno (Palm)", "Fresno (Shaw)", "Hawthorne",
     "Koreatown", "Laguna Woods", "Oxnard",
     "Riverside", "West Hollywood",
 ])
 
-ALL_STORES: List[str] = sorted(ALL_STORES_SET)
-CSV_TARGET_STORES = ALL_STORES  # backward-compat alias
+ALL_STORES:        list[str] = sorted(ALL_STORES_SET)
+ALL_LOCATIONS:     list[str] = ALL_STORES       # legacy alias
+CSV_TARGET_STORES: list[str] = ALL_STORES       # legacy alias
 
+
+# ── Monolith: line 2855 ───────────────────────────────────────────────────────
 
 def normalize_store_name(raw_name: str) -> str:
-    """Normalize any MIS/raw store name to canonical Google Sheet name."""
+    """
+    Normalize any MIS/raw store name to canonical Google Sheet name.
+    'The Artist Tree - Fresno Shaw' → 'Fresno (Shaw)'.
+    CANONICAL definition — all other modules must import from here.
+    Monolith: line 2855.
+    """
     if not raw_name:
         return raw_name
     clean = str(raw_name).strip()
@@ -73,21 +89,26 @@ def normalize_store_name(raw_name: str) -> str:
     ).strip()
     if stripped in STORE_MAPPING:
         return STORE_MAPPING[stripped]
-    stripped_lower = stripped.lower()
-    if stripped_lower in _STORE_MAPPING_LOWER:
-        return _STORE_MAPPING_LOWER[stripped_lower]
+    if stripped.lower() in _STORE_MAPPING_LOWER:
+        return _STORE_MAPPING_LOWER[stripped.lower()]
     return stripped
 
 
+# ── Monolith: line 2886 ───────────────────────────────────────────────────────
+
 def _extract_except_stores(text: str) -> list | None:
-    """Extract exception store names from text containing 'Except:' ANYWHERE."""
+    """
+    Extract exception store names from text containing 'Except:' anywhere.
+    Returns sorted list of canonical store names, or None if no 'except' pattern.
+    Monolith: line 2886.
+    """
     m = re.search(r'all\s+locations[\s(]*except[):\s]*(.+)', text, re.IGNORECASE)
     if not m:
         return None
     raw_part = m.group(1).strip().strip('()[] \t')
     if not raw_part:
         return []
-    result = []
+    result: list = []
     for segment in raw_part.split(','):
         seg = segment.strip().strip('()[] \t')
         if not seg:
@@ -106,9 +127,15 @@ def _extract_except_stores(text: str) -> list | None:
     return sorted(set(result))
 
 
+# ── Monolith: line 2924 ───────────────────────────────────────────────────────
+
 def normalize_location_string(loc_str: str) -> str:
-    """Normalize a full MIS location string to canonical Google Sheet format."""
-    if not loc_str or str(loc_str).strip().lower() in ['', 'nan', 'none', '-', 'n/a', 'nat']:
+    """
+    Normalize a full MIS location string to canonical Google Sheet format.
+    Applies normalize_store_name() to every individual store.
+    Monolith: line 2924.
+    """
+    if not loc_str or str(loc_str).strip().lower() in ('', 'nan', 'none', '-', 'n/a', 'nat'):
         return "All Locations"
     s = str(loc_str).strip()
     except_stores = _extract_except_stores(s)
@@ -116,376 +143,143 @@ def normalize_location_string(loc_str: str) -> str:
         if except_stores:
             return f"All Locations Except: {', '.join(except_stores)}"
         return "All Locations"
-    if s.lower() in ['all locations', 'all']:
+    if s.lower() in ('all locations', 'all'):
         return "All Locations"
     stores = sorted({normalize_store_name(st.strip()) for st in s.split(',') if st.strip()})
-    if len(stores) >= len(ALL_STORES_SET) and set(stores) == ALL_STORES_SET:
+    if set(stores) == ALL_STORES_SET:
         return "All Locations"
     return ', '.join(stores)
 
 
-def parse_locations(location_str):
-    """
-    Parse location string into a set of store names.
-    Handles: "All Locations", "All Locations Except: X, Y", "Store1, Store2, Store3"
-    v12.26.1: Normalizes all store names via normalize_store_name() before comparison.
-    v12.26.2: Detects "All Locations Except:" ANYWHERE in string, not just at start.
-    Returns: (store_set, is_all_except, excluded_stores)
-    """
-    if not location_str or location_str == '-':
-        return set(), False, set()
-    
-    location_str = str(location_str).strip()
-    
-    # v12.26.2: Handle "All Locations Except: X, Y, Z" ANYWHERE in string
-    except_stores = _extract_except_stores(location_str)
-    if except_stores is not None:
-        excluded_stores = set(except_stores)
-        included_stores = ALL_STORES_SET - excluded_stores
-        return included_stores, True, excluded_stores
-    
-    # Handle "All Locations"
-    if location_str.lower() in ['all locations', 'all']:
-        return set(ALL_STORES_SET), False, set()
-    
-    # Handle comma-separated list - normalize each store name
-    stores = {normalize_store_name(s.strip()) for s in location_str.split(',') if s.strip()}
-    return stores, False, set()
-
-
+# ── Monolith: line 2340 ───────────────────────────────────────────────────────
 
 def resolve_to_store_set(location_string: str) -> frozenset:
-    """v12.26.3: Convert any location string to a normalized frozenset of canonical store names.
-    Handles: 'All Locations', 'All Locations Except: X, Y', 'All Locations (Except: X)',
-             specific comma-separated lists, blank/empty.
-    Used for set-based comparison: if resolve_to_store_set(sheet) == resolve_to_store_set(mis): MATCH.
     """
-    if not location_string or str(location_string).strip().lower() in ['', 'nan', 'none', '-', 'n/a', 'not specified']:
+    Convert any location string to a normalized frozenset of canonical store names.
+    Used for set-based comparison: if sets match → MATCH.
+    Monolith: line 2340.
+    """
+    if not location_string or str(location_string).strip().lower() in (
+            '', 'nan', 'none', '-', 'n/a', 'not specified'):
         return frozenset(ALL_STORES_SET)
-    store_set, _, _ = parse_locations(location_string)
-    if not store_set:
+    s = str(location_string).strip()
+    except_stores = _extract_except_stores(s)
+    if except_stores is not None:
+        included = ALL_STORES_SET - frozenset(except_stores)
+        return frozenset(included) if included else frozenset(ALL_STORES_SET)
+    if s.lower() in ('all locations', 'all'):
         return frozenset(ALL_STORES_SET)
-    return frozenset(store_set)
+    stores = {normalize_store_name(st.strip()) for st in s.split(',') if st.strip()}
+    stores &= ALL_STORES_SET
+    return frozenset(stores) if stores else frozenset(ALL_STORES_SET)
 
 
-
-def calculate_location_conflict(weekly_locations, tier1_locations):
-    """
-    Calculate if locations overlap and return conflict type and details.
-    Returns: (has_conflict, conflict_stores, non_conflict_stores, conflict_type)
-    conflict_type: 'FULL' or 'PARTIAL' or 'NONE'
-    """
-    weekly_set, weekly_is_except, weekly_excluded = parse_locations(weekly_locations)
-    tier1_set, tier1_is_except, tier1_excluded = parse_locations(tier1_locations)
-    
-    # Calculate intersection
-    conflicting_stores = weekly_set & tier1_set
-    
-    if not conflicting_stores:
-        # No overlap
-        return False, set(), set(), 'NONE'
-    
-    # Non-conflicting stores (where weekly continues during conflict)
-    non_conflicting_stores = weekly_set - tier1_set
-    
-    if non_conflicting_stores:
-        # Partial conflict - need PATCH
-        return True, conflicting_stores, non_conflicting_stores, 'PARTIAL'
-    else:
-        # Full conflict - all weekly locations affected
-        return True, conflicting_stores, set(), 'FULL'
-
-
-def format_location_set(stores, original_weekly_locations=""):
-    """
-    Format a set of stores back into a display string.
-    If it matches "All Locations", return that. Otherwise list stores.
-    """
-    if not stores:
-        return "-"
-    
-    stores_set = set(stores)
-    all_locations_set = set(ALL_LOCATIONS)
-    
-    # If it's all locations, just say "All Locations"
-    if stores_set == all_locations_set:
-        return "All Locations"
-    
-    # If it's "All Locations Except" format
-    excluded = all_locations_set - stores_set
-    if excluded and len(excluded) < len(stores_set):
-        # More efficient to show as "except"
-        return f"All Locations Except: {', '.join(sorted(excluded))}"
-    
-    # Just list the stores
-    return ", ".join(sorted(stores))
-
-
+# ── Monolith: line 5123 ───────────────────────────────────────────────────────
 
 def format_location_display(locations: str, exceptions: str) -> str:
-    """v12.26.3: Format location + exceptions into display string.
-    Outputs 'All Locations Except: X, Y' (no parentheses) for downstream set-matching.
-    Normalizes store names to canonical Google Sheet format.
+    """
+    Format location + exceptions into display string.
+    'All Locations Except: X, Y' (no parentheses) for downstream set-matching.
+    Monolith: line 5123.
     """
     if pd.isna(locations) or not str(locations).strip():
         return "Not Specified"
     loc_str = str(locations).strip()
     exc_str = str(exceptions).strip() if pd.notna(exceptions) else ""
     if exc_str:
-        # Normalize exception store names to canonical format
         exc_parts = [normalize_store_name(e.strip()) for e in exc_str.split(',') if e.strip()]
-        exc_normalized = ', '.join(sorted(set(exc_parts)))
-        return f"All Locations Except: {exc_normalized}"
+        return f"All Locations Except: {', '.join(sorted(set(exc_parts)))}"
     return loc_str
 
 
-def format_csv_locations(locations_raw: str, exceptions_raw: str) -> str:
-    """
-    Parses Google Sheet location columns and returns the CSV-formatted string.
-    Logic:
-    1. If 'All Locations' and no exceptions -> Return "" (Blank)
-    2. If 'All Locations' AND exceptions -> Return All CSV Stores minus exceptions.
-    3. If specific stores -> Return mapped stores comma-separated.
-    """
-    loc_str = str(locations_raw).strip()
-    exc_str = str(exceptions_raw).strip()
-    
-    # Normalize input
-    is_all_locs = "all locations" in loc_str.lower()
-    
-    final_stores = set()
-    
-    if is_all_locs:
-        if not exc_str or exc_str.lower() in ['nan', 'none', '']:
-            return "" # Return blank if All Locations with no exceptions
-        
-        # All Locations EXCEPT...
-        # 1. Start with all target stores
-        final_stores = set(CSV_TARGET_STORES)
-        
-        # 2. Identify exceptions
-        exceptions = [e.strip() for e in exc_str.split(',') if e.strip()]
-        mapped_exceptions = []
-        for e in exceptions:
-            mapped = STORE_MAPPING.get(e, e) # Try to map, else use raw
-            mapped_exceptions.append(mapped)
-            
-        # 3. Remove exceptions
-        for exc in mapped_exceptions:
-            if exc in final_stores:
-                final_stores.remove(exc)
-    else:
-        # Specific locations listed
-        raw_list = [l.strip() for l in loc_str.split(',') if l.strip()]
-        for r in raw_list:
-            if r in STORE_MAPPING:
-                final_stores.add(STORE_MAPPING[r])
-            else:
-                # Fallback: check if it's already a valid target store
-                if r in CSV_TARGET_STORES:
-                    final_stores.add(r)
-    
-    # Return comma-separated string sorted alphabetically
-    return ", ".join(sorted(list(final_stores)))
-
+# ── Monolith: line 6460 — GLOBAL_DATA → session (Issue C-2) ─────────────────
 
 def resolve_location_columns(row: pd.Series) -> Tuple[str, str]:
     """
-    Logic Router for Location Columns.
+    Logic router for location columns.
     v12.27.0: Checks [Store] bracket alias first.
-    v12.25.7: Prioritizes column header containing "(Discount Applies At)" using FUZZY matching.
-    Falls back to 'Locations' column if needed.
-    
-    HEADER DETECTION: Searches for header containing "(Discount Applies At)" (with parentheses)
-    Handles multi-line headers where "Locations" and "(Discount Applies At)" are on separate lines.
-    This makes the function resilient to column position changes in Google Sheet.
+    GLOBAL_DATA['mis']['bracket_map'] replaced with session.get_mis_bracket_map().
+    Monolith: line 6460.
     """
-    # v12.27.0: Check bracket alias first
-    bracket_map = GLOBAL_DATA.get('mis', {}).get('bracket_map', {})
+    # C-2 fix: replaced GLOBAL_DATA.get('mis', {}).get('bracket_map', {})
+    from src.session import session
+    bracket_map: dict = session.get_mis_bracket_map() or {}
     bracket_store_col = bracket_map.get('[Store]')
-    
-    # 1. FUZZY FIND the "Master Switch" column
-    # v12.25.7: Enhanced to handle multi-line headers and various formats
-    master_col_name = None
-    fallback_locations_col = None  # Pure "Locations" column (not Marketing)
-    
-    # v12.27.0: Bracket alias takes priority
+
+    master_col_name   = None
+    fallback_locs_col = None
+
     if bracket_store_col and bracket_store_col in row.index:
         master_col_name = bracket_store_col
         print(f"[LOCATION] v12.27.0: Using [Store] bracket → column '{bracket_store_col}'")
-    
-    # DEBUG: Print all column names once per unique set (helps diagnose column detection)
-    debug_cols = [str(col) for col in row.index]
-    if not hasattr(resolve_location_columns, '_logged_cols') or resolve_location_columns._logged_cols != debug_cols:
+
+    debug_cols = [str(c) for c in row.index]
+    if not getattr(resolve_location_columns, '_logged_cols', None) == debug_cols:
         resolve_location_columns._logged_cols = debug_cols
         print(f"[LOCATION-DEBUG] Available columns: {debug_cols}")
-    
-    # v12.27.0: Only do fuzzy scan if bracket alias didn't resolve
+
     if master_col_name is None:
         for col in row.index:
             col_str = str(col)
-            c_lower = col_str.lower().replace('\n', ' ')  # Normalize newlines to spaces
-            
-            # Primary match: "(discount applies at)" with parentheses
+            c_lower = col_str.lower().replace('\n', ' ')
             if '(discount applies at)' in c_lower:
                 master_col_name = col
                 print(f"[LOCATION] Found primary match: '{col_str}'")
                 break
-            # Secondary match: "discount applies" without parentheses
             if master_col_name is None and 'discount' in c_lower and 'applies' in c_lower:
                 master_col_name = col
-                print(f"[LOCATION] Found secondary match (discount+applies): '{col_str}'")
-            # Fallback: "locations" column that is NOT the marketing column
-            if fallback_locations_col is None:
+                print(f"[LOCATION] Found secondary match: '{col_str}'")
+            if fallback_locs_col is None:
                 if 'locations' in c_lower and 'marketing' not in c_lower:
-                    # Check if it starts with "locations" or is primarily a locations column
-                    if c_lower.startswith('locations') or 'locations' in c_lower.split()[0] if c_lower.split() else False:
-                        fallback_locations_col = col
-                        print(f"[LOCATION] Found fallback 'Locations' column: '{col_str}'")
-    
-    # Use fallback if no primary match found
-    if master_col_name is None and fallback_locations_col is not None:
-        master_col_name = fallback_locations_col
-        print(f"[LOCATION] Using fallback column: {master_col_name}")
-    
+                    parts = c_lower.split()
+                    if parts and 'locations' in parts[0]:
+                        fallback_locs_col = col
+                        print(f"[LOCATION] Found fallback column: '{col_str}'")
+
+    if master_col_name is None and fallback_locs_col is not None:
+        master_col_name = fallback_locs_col
+        print(f"[LOCATION] Using fallback: {master_col_name}")
+
     if master_col_name is None:
-        print(f"[LOCATION-WARNING] No location column found!")
-            
-    # Read value if column found, else empty
-    master_col_val = str(row[master_col_name]).strip() if master_col_name else ""
-    master_clean = master_col_val.lower()
-    
-    # --- LOGIC BRANCH 1: "SAME AS MARKETING" FALLBACK ---
-    # If explicitly "Same as Marketing" -> Look at Marketing column
+        print("[LOCATION-WARNING] No location column found!")
+
+    master_val   = str(row[master_col_name]).strip() if master_col_name else ""
+    master_clean = master_val.lower()
+
+    # BRANCH 1: "Same as Marketing"
     if "same as market" in master_clean:
-        # Find Marketing column
-        marketing_col_name = None
+        marketing_col = None
         for col in row.index:
-            c_lower = str(col).lower()
-            if 'marketing' in c_lower and 'location' in c_lower:
-                marketing_col_name = col
+            c = str(col).lower()
+            if 'marketing' in c and 'location' in c:
+                marketing_col = col
                 break
-        
-        if marketing_col_name:
-            marketing_val = str(row[marketing_col_name]).strip()
-            marketing_clean = marketing_val.lower()
-            
-            # ERROR CHECK: Circular reference
-            if "same as market" in marketing_clean:
-                print(f"[ERROR] Circular 'Same as Marketing' reference detected at row {row.name + 1}")
-                print(f"[ERROR] Both 'Discount Applies at' and 'Marketing' columns say 'Same as Marketing'")
-                return "", ""  # Return empty to skip this row
-            
-            # Recursively apply logic to Marketing column value
-            # Create a temporary row with the marketing value
-            temp_row = row.copy()
-            temp_row[master_col_name] = marketing_val
-            return resolve_location_columns(temp_row)
+        if marketing_col:
+            mval   = str(row[marketing_col]).strip()
+            mclean = mval.lower()
+            if "same as market" in mclean:
+                print(f"[ERROR] Circular 'Same as Marketing' at row {row.name + 1}")
+                return "", ""
+            temp = row.copy()
+            temp[master_col_name] = mval
+            return resolve_location_columns(temp)
         else:
-            print(f"[ERROR] 'Same as Marketing' specified but Marketing column not found at row {row.name + 1}")
+            print(f"[ERROR] 'Same as Marketing' but no Marketing col at row {row.name + 1}")
             return "", ""
 
-    # --- LOGIC BRANCH 2: EMPTY OR NAN ---
-    if not master_col_val or master_clean == 'nan':
+    # BRANCH 2: Empty / NaN
+    if not master_val or master_clean == 'nan':
         return "", ""
 
-    # --- LOGIC BRANCH 3: "ALL LOCATIONS EXCEPT" ---
-    # If the phrase exists anywhere in the cell, ALL locations become exceptions
+    # BRANCH 3: "All Locations Except"
     if "all locations except" in master_clean:
-        # Remove the trigger phrase to extract location names
-        cleaned = master_col_val.replace("All Locations Except:", "").replace("all locations except:", "")
-        # Split by comma and extract all location names
+        cleaned    = master_val.replace("All Locations Except:", "").replace("all locations except:", "")
         exceptions = [loc.strip() for loc in cleaned.split(',') if loc.strip()]
-        
         return "All Locations", ", ".join(exceptions)
 
-    # --- LOGIC BRANCH 4: "ALL LOCATIONS" (Exact or Clean Match) ---
+    # BRANCH 4: "All Locations"
     if master_clean == "all locations":
         return "All Locations", ""
 
-    # --- LOGIC BRANCH 5: SPECIFIC LIST ---
-    # If we are here, it's just a list of stores (e.g. "Dixon, Davis")
-    return master_col_val, ""
-
-
-def find_locations_value(row, columns):
-    """
-    v12.17: Find locations value from row - uses resolve_location_columns for consistency.
-    """
-    import pandas as pd
-    
-    # v12.17: Use the same logic as the main matching system
-    try:
-        loc_raw, exc_raw = resolve_location_columns(row)
-        result = format_location_display(loc_raw, exc_raw)
-        if result and result.lower() not in ['', '-', 'nan', 'none']:
-            print(f"[COMPARE-TO-SHEET] Locations via resolve_location_columns: '{result}'")
-            return result
-    except Exception as e:
-        print(f"[COMPARE-TO-SHEET] resolve_location_columns failed: {e}, falling back")
-    
-    # Fallback: Priority order for column names
-    location_col_names = [
-        "Locations (Discount Applies at)",
-        "Locations",
-        "Location", 
-        "Store Locations",
-        "Stores"
-    ]
-    
-    def clean_value(val):
-        """Clean cell value, handling NaN, None, etc."""
-        if val is None:
-            return ""
-        if pd.isna(val):
-            return ""
-        s = str(val).strip()
-        if s.lower() in ['nan', 'none', 'null', '-']:
-            return ""
-        return s
-    
-    # Try exact matches first
-    for col_name in location_col_names:
-        if col_name in columns:
-            val = clean_value(row.get(col_name, ""))
-            if val:
-                print(f"[COMPARE-TO-SHEET] Found Locations in column '{col_name}': '{val}'")
-                return val
-    
-    # Try case-insensitive partial matches
-    for col in columns:
-        col_lower = col.lower()
-        if "location" in col_lower or "store" in col_lower:
-            if "marketing" not in col_lower:  # Skip marketing columns
-                val = clean_value(row.get(col, ""))
-                if val:
-                    print(f"[COMPARE-TO-SHEET] Found Locations in column '{col}': '{val}'")
-                    return val
-    
-    # Log what columns were available for debugging
-    location_cols = [c for c in columns if 'location' in c.lower() or 'store' in c.lower()]
-    print(f"[COMPARE-TO-SHEET] WARNING: No locations value found!")
-    print(f"[COMPARE-TO-SHEET] Available location-like columns: {location_cols}")
-    print(f"[COMPARE-TO-SHEET] Defaulting to 'All Locations'")
-    return "All Locations"
-
-
-def convert_store_name_to_data_cy(store_name):
-    """
-    Convert store display name to data-cy format.
-    Example: "The Artist Tree - Koreatown" → "lbl-TheArtistTree-Koreatown"
-    """
-    # Remove spaces and hyphens between words
-    # "The Artist Tree - Koreatown" → "TheArtistTree-Koreatown"
-    parts = store_name.split(' - ')
-    if len(parts) == 2:
-        company_part = parts[0].replace(' ', '')  # "TheArtistTree"
-        location_part = parts[1].replace(' ', '')  # "Koreatown"
-        result = f"lbl-{company_part}-{location_part}"
-    else:
-        # Fallback for different formats
-        result = f"lbl-{store_name.replace(' ', '').replace('-', '')}"
-    
-    return result
-
-
+    # BRANCH 5: Specific list
+    return master_val, ""

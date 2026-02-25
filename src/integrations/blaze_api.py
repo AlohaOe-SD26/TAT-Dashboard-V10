@@ -18,6 +18,9 @@ from src.session import session
 from typing import Optional, Dict, List, Any
 from datetime import datetime, timedelta
 
+# C-3: normalize_store_name — canonical definition is in location_helpers (additive import)
+from src.utils.location_helpers import normalize_store_name
+
 # Selenium (optional - Blaze browser ops)
 import os
 import sys
@@ -51,95 +54,18 @@ except ImportError:
 # For now, functions reference GLOBAL_DATA as they did in the monolith.
 
 # ── Module-level constants (were globals in the monolith) ────────────────────
-BASE_DIR = Path(__file__).resolve().parent.parent.parent  # project root
-REPORTS_DIR     = BASE_DIR / 'reports'
-GROUPS_FILE     = BASE_DIR / 'promotion_groups.json'
+BASE_DIR         = Path(__file__).resolve().parent.parent.parent  # project root
+REPORTS_DIR      = BASE_DIR / 'reports'
+GROUPS_FILE      = BASE_DIR / 'promotion_groups.json'
 BLAZE_TOKEN_FILE = BASE_DIR / 'blaze_token.json'
 
+# ── Canonical store name resolution — import from location_helpers (C-3 / M-4) ─
+from src.utils.location_helpers import (
+    normalize_store_name, STORE_MAPPING, _STORE_MAPPING_LOWER,
+    ALL_STORES_SET, ALL_STORES, CSV_TARGET_STORES,
+)
 
-# ── Store name mapping (monolith: lines 2803–2884) ───────────────────────────
-# Required by parse_promotion() at line ~549 via normalize_store_name().
-
-STORE_MAPPING: dict[str, str] = {
-    # Raw "The Artist Tree - X" → canonical Google Sheet name
-    "The Artist Tree - West Hollywood": "West Hollywood",
-    "The Artist Tree - Beverly Hills":  "Beverly Hills",
-    "The Artist Tree - Beverly":        "Beverly Hills",
-    "The Artist Tree - Koreatown":      "Koreatown",
-    "The Artist Tree - Riverside":      "Riverside",
-    "The Artist Tree - Fresno":         "Fresno (Palm)",
-    "The Artist Tree - Fresno Palm":    "Fresno (Palm)",
-    "The Artist Tree - Fresno Shaw":    "Fresno (Shaw)",
-    "The Artist Tree - Oxnard":         "Oxnard",
-    "The Artist Tree - El Sobrante":    "El Sobrante",
-    "The Artist Tree - Laguna Woods":   "Laguna Woods",
-    "The Artist Tree - Hawthorne":      "Hawthorne",
-    "The Artist Tree - Dixon":          "Dixon",
-    "The Artist Tree - Davis":          "Davis",
-    # Short MIS CSV variations → canonical name
-    "West Hollywood":  "West Hollywood",
-    "Beverly":         "Beverly Hills",
-    "Beverly Hills":   "Beverly Hills",
-    "Koreatown":       "Koreatown",
-    "Riverside":       "Riverside",
-    "Fresno":          "Fresno (Palm)",
-    "Fresno Palm":     "Fresno (Palm)",
-    "Fresno (Palm)":   "Fresno (Palm)",
-    "Fresno Shaw":     "Fresno (Shaw)",
-    "Fresno (Shaw)":   "Fresno (Shaw)",
-    "Oxnard":          "Oxnard",
-    "El Sobrante":     "El Sobrante",
-    "Laguna Woods":    "Laguna Woods",
-    "Hawthorne":       "Hawthorne",
-    "Dixon":           "Dixon",
-    "Davis":           "Davis",
-}
-
-_STORE_MAPPING_LOWER: dict[str, str] = {k.lower(): v for k, v in STORE_MAPPING.items()}
-
-ALL_STORES_SET: frozenset[str] = frozenset([
-    "Davis", "Dixon", "Beverly Hills", "El Sobrante",
-    "Fresno (Palm)", "Fresno (Shaw)", "Hawthorne",
-    "Koreatown", "Laguna Woods", "Oxnard",
-    "Riverside", "West Hollywood",
-])
-
-ALL_STORES:       list[str] = sorted(ALL_STORES_SET)
-CSV_TARGET_STORES: list[str] = ALL_STORES  # legacy alias
-
-
-def normalize_store_name(raw_name: str) -> str:
-    """
-    Normalize any MIS/raw store name to canonical Google Sheet name.
-    'The Artist Tree - Fresno Shaw' → 'Fresno (Shaw)'
-    'Beverly' → 'Beverly Hills', etc.
-    Monolith: line 2855.
-    """
-    if not raw_name:
-        return raw_name
-    clean = str(raw_name).strip()
-    if not clean:
-        return clean
-    if clean in STORE_MAPPING:
-        return STORE_MAPPING[clean]
-    clean_lower = clean.lower()
-    if clean_lower in _STORE_MAPPING_LOWER:
-        return _STORE_MAPPING_LOWER[clean_lower]
-    stripped = re.sub(
-        r"^(The Artist Tree|Davisville Business Enterprises,?\s*Inc\.?|Club 420)\s*[-\u2013\u2014]?\s*",
-        "", clean, flags=re.IGNORECASE
-    ).strip()
-    if stripped in STORE_MAPPING:
-        return STORE_MAPPING[stripped]
-    stripped_lower = stripped.lower()
-    if stripped_lower in _STORE_MAPPING_LOWER:
-        return _STORE_MAPPING_LOWER[stripped_lower]
-    return stripped
-
-
-
-# Added additively — scrape_blaze_data_from_browser() calls these at line 299.
-
+# ── Group cache helpers (monolith: lines 3247–3256) ───────────────────────────
 def load_groups() -> dict:
     """Load promotion groups cache from disk."""
     try:
@@ -148,11 +74,19 @@ def load_groups() -> dict:
     except Exception:
         return {}
 
-
 def save_groups(groups_data: dict) -> None:
     """Persist promotion groups cache to disk."""
     with open(GROUPS_FILE, 'w') as f:
         json.dump(groups_data, f, indent=2)
+
+def save_stored_token(token: str) -> None:
+    """Save Blaze token to blaze_token.json. Monolith: line 3271."""
+    try:
+        with open(BLAZE_TOKEN_FILE, 'w') as f:
+            json.dump({'token': token, 'updated': str(datetime.now())}, f)
+        print('[INFO] Blaze token saved to file.')
+    except Exception as e:
+        print(f'[WARN] Failed to save token: {e}')
 
 
 def load_stored_token() -> Optional[str]:
@@ -167,16 +101,6 @@ def load_stored_token() -> Optional[str]:
     except Exception as e:
         print(f"[WARN] Failed to load stored token: {e}")
     return None
-
-
-def save_stored_token(token: str) -> None:
-    """Saves the Blaze token to blaze_token.json. Monolith: line 3271."""
-    try:
-        with open(BLAZE_TOKEN_FILE, 'w') as f:
-            json.dump({'token': token, 'updated': str(datetime.now())}, f)
-        print("[INFO] Blaze token saved to file.")
-    except Exception as e:
-        print(f"[WARN] Failed to save token: {e}")
 
 
 def validate_token(token: str) -> bool:
@@ -379,12 +303,34 @@ def scrape_blaze_data_from_browser():
     if not driver:
         return None, "Browser not initialized - cannot sniff token."
 
-    # --- HELPER: LOG SNIFFER (dedicated Chrome — attached sessions have no perf log) ---
+    # --- HELPER: LOG SNIFFER ---
+    def sniff_token_from_logs(target_endpoint):
+        print(f"[TOKEN] Sniffing logs for endpoint: {target_endpoint}...")
+        try:
+            logs = driver.get_log('performance')
+            for entry in logs:
+                try:
+                    message_obj = json.loads(entry['message'])
+                    message = message_obj.get('message', {})
+                    if message.get('method') == 'Network.requestWillBeSent':
+                        req = message['params']['request']
+                        url = req.get('url', '')
+                        if 'api.blaze.me' in url and target_endpoint in url:
+                            headers = req.get('headers', {})
+                            auth = next((v for k, v in headers.items() if k.lower() == 'authorization'), None)
+                            if auth and 'Token' in auth:
+                                return auth.replace('Token ', '').strip()
+                except: continue
+        except Exception as e:
+            print(f"[WARN] Log sniff error: {e}")
+        return None
+
+    # --- HELPER: DEDICATED HEADLESS SNIFF CHROME ---
     def sniff_token_via_dedicated_chrome() -> str | None:
         """
-        Spawn a temporary, separate Chrome process with goog:loggingPrefs enabled.
-        Navigate to smart-collections, sniff the Authorization token from network logs,
-        then close the process. Never touches the user's attached session.
+        Spawn a temporary headless Chrome with goog:loggingPrefs enabled.
+        Attached sessions cannot have performance logging — so we need a separate
+        process. Runs invisible (--headless=new). Never touches the user's session.
         """
         tmp_driver = None
         try:
@@ -392,7 +338,7 @@ def scrape_blaze_data_from_browser():
             sniff_opts = webdriver.ChromeOptions()
             sniff_opts.add_argument(f'user-data-dir={_get_chrome_profile_dir()}')
             sniff_opts.add_argument('profile-directory=Default')
-            sniff_opts.add_argument('--headless=new')          # run invisible — no window
+            sniff_opts.add_argument('--headless=new')
             sniff_opts.add_argument('--no-sandbox')
             sniff_opts.add_argument('--disable-dev-shm-usage')
             sniff_opts.add_argument('--disable-blink-features=AutomationControlled')
@@ -400,12 +346,10 @@ def scrape_blaze_data_from_browser():
             sniff_opts.add_experimental_option('excludeSwitches', ['enable-automation', 'enable-logging'])
             sniff_opts.add_experimental_option('useAutomationExtension', False)
             sniff_opts.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
-
             print('[TOKEN] Launching dedicated sniff Chrome...')
             tmp_driver = webdriver.Chrome(options=sniff_opts)
             tmp_driver.get('https://retail.blaze.me/company-promotions/smart-collections')
             time.sleep(6)
-
             logs = tmp_driver.get_log('performance')
             for entry in logs:
                 try:
@@ -413,11 +357,8 @@ def scrape_blaze_data_from_browser():
                     if msg.get('method') == 'Network.requestWillBeSent':
                         req = msg['params']['request']
                         if 'api.blaze.me' in req.get('url', '') and 'smartcollections' in req.get('url', ''):
-                            auth = next(
-                                (v for k, v in req.get('headers', {}).items()
-                                 if k.lower() == 'authorization'),
-                                None
-                            )
+                            auth = next((v for k, v in req.get('headers', {}).items()
+                                         if k.lower() == 'authorization'), None)
                             if auth and 'Token' in auth:
                                 return auth.replace('Token ', '').strip()
                 except Exception:
@@ -467,7 +408,7 @@ def scrape_blaze_data_from_browser():
             # We don't wipe 'colls' here so we preserve old names if scrape fails, 
             # but we force the scrape to try and get new ones.
 
-    # --- STEP 2: DEDICATED SNIFF CHROME (If needed) ---
+    # --- STEP 2: DEDICATED SNIFF CHROME (if token invalid/missing) ---
     if not current_token:
         print("[NAV] Token invalid or missing. Launching dedicated sniff Chrome...")
         collections_token = sniff_token_via_dedicated_chrome()
@@ -478,7 +419,6 @@ def scrape_blaze_data_from_browser():
         else:
             print("[WARN] Failed to capture token from dedicated sniff Chrome.")
 
-        # Fetch data with new token
         if current_token:
             shops, new_colls, raw_promos = get_api_data(current_token)
             if new_colls:
