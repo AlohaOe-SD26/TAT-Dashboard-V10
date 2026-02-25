@@ -687,7 +687,14 @@ def pull_mis_csv_report_background(driver: Any) -> tuple[bool, str, str]:
         # Retry loop — download with size validation
         for attempt in range(1, MAX_RETRY_ATTEMPTS + 1):
             _log(f'[MIS CSV] Download attempt {attempt}/{MAX_RETRY_ATTEMPTS}...')
-            existing_files = set(os.listdir(_MIS_REPORTS_DIR))
+
+            # Watch MIS_CSV_REPORTS primarily; fall back to user Downloads if CDP
+            # download redirect didn't take (Browser.setDownloadBehavior unsupported).
+            _downloads_dir = _Path.home() / 'Downloads'
+            _watch_dirs: list = [_MIS_REPORTS_DIR]
+            if _downloads_dir.exists() and _downloads_dir.resolve() != _MIS_REPORTS_DIR.resolve():
+                _watch_dirs.append(_downloads_dir)
+            existing_by_dir = {d: set(os.listdir(d)) for d in _watch_dirs if d.exists()}
 
             csv_btn = WebDriverWait(driver, 10).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, 'button.buttons-csv'))
@@ -698,10 +705,17 @@ def pull_mis_csv_report_background(driver: Any) -> tuple[bool, str, str]:
             new_file_path = None
             for _ in range(30):
                 time.sleep(1)
-                new_files = set(os.listdir(_MIS_REPORTS_DIR)) - existing_files
-                for f in new_files:
-                    if (f.endswith('.csv') or f.endswith('.xlsx')) and not f.endswith('.crdownload'):
-                        new_file_path = _MIS_REPORTS_DIR / f
+                for watch_dir in _watch_dirs:
+                    if not watch_dir.exists():
+                        continue
+                    new_files = set(os.listdir(watch_dir)) - existing_by_dir.get(watch_dir, set())
+                    for f in new_files:
+                        if (f.endswith('.csv') or f.endswith('.xlsx')) and not f.endswith('.crdownload'):
+                            new_file_path = watch_dir / f
+                            if watch_dir != _MIS_REPORTS_DIR:
+                                _log(f'[MIS CSV] File landed in {watch_dir} (CDP missed) — will move to reports dir.')
+                            break
+                    if new_file_path:
                         break
                 if new_file_path:
                     break
@@ -742,7 +756,12 @@ def pull_mis_csv_report_background(driver: Any) -> tuple[bool, str, str]:
             if final_path.exists():
                 os.remove(final_path)
             time.sleep(0.5)
-            os.rename(new_file_path, final_path)
+            try:
+                os.rename(new_file_path, final_path)
+            except OSError:
+                # Cross-device move (e.g. Downloads on C:, reports on D:) — use shutil
+                import shutil as _shutil
+                _shutil.move(str(new_file_path), str(final_path))
             _log(f'[MIS CSV] Report ready: {final_name} ({file_size} bytes)')
             return True, str(final_path), final_name
 

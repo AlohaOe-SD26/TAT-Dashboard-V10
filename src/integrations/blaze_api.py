@@ -57,7 +57,87 @@ GROUPS_FILE     = BASE_DIR / 'promotion_groups.json'
 BLAZE_TOKEN_FILE = BASE_DIR / 'blaze_token.json'
 
 
-# ── Group cache helpers (monolith: lines 3247–3256) ──────────────────────────
+# ── Store name mapping (monolith: lines 2803–2884) ───────────────────────────
+# Required by parse_promotion() at line ~549 via normalize_store_name().
+
+STORE_MAPPING: dict[str, str] = {
+    # Raw "The Artist Tree - X" → canonical Google Sheet name
+    "The Artist Tree - West Hollywood": "West Hollywood",
+    "The Artist Tree - Beverly Hills":  "Beverly Hills",
+    "The Artist Tree - Beverly":        "Beverly Hills",
+    "The Artist Tree - Koreatown":      "Koreatown",
+    "The Artist Tree - Riverside":      "Riverside",
+    "The Artist Tree - Fresno":         "Fresno (Palm)",
+    "The Artist Tree - Fresno Palm":    "Fresno (Palm)",
+    "The Artist Tree - Fresno Shaw":    "Fresno (Shaw)",
+    "The Artist Tree - Oxnard":         "Oxnard",
+    "The Artist Tree - El Sobrante":    "El Sobrante",
+    "The Artist Tree - Laguna Woods":   "Laguna Woods",
+    "The Artist Tree - Hawthorne":      "Hawthorne",
+    "The Artist Tree - Dixon":          "Dixon",
+    "The Artist Tree - Davis":          "Davis",
+    # Short MIS CSV variations → canonical name
+    "West Hollywood":  "West Hollywood",
+    "Beverly":         "Beverly Hills",
+    "Beverly Hills":   "Beverly Hills",
+    "Koreatown":       "Koreatown",
+    "Riverside":       "Riverside",
+    "Fresno":          "Fresno (Palm)",
+    "Fresno Palm":     "Fresno (Palm)",
+    "Fresno (Palm)":   "Fresno (Palm)",
+    "Fresno Shaw":     "Fresno (Shaw)",
+    "Fresno (Shaw)":   "Fresno (Shaw)",
+    "Oxnard":          "Oxnard",
+    "El Sobrante":     "El Sobrante",
+    "Laguna Woods":    "Laguna Woods",
+    "Hawthorne":       "Hawthorne",
+    "Dixon":           "Dixon",
+    "Davis":           "Davis",
+}
+
+_STORE_MAPPING_LOWER: dict[str, str] = {k.lower(): v for k, v in STORE_MAPPING.items()}
+
+ALL_STORES_SET: frozenset[str] = frozenset([
+    "Davis", "Dixon", "Beverly Hills", "El Sobrante",
+    "Fresno (Palm)", "Fresno (Shaw)", "Hawthorne",
+    "Koreatown", "Laguna Woods", "Oxnard",
+    "Riverside", "West Hollywood",
+])
+
+ALL_STORES:       list[str] = sorted(ALL_STORES_SET)
+CSV_TARGET_STORES: list[str] = ALL_STORES  # legacy alias
+
+
+def normalize_store_name(raw_name: str) -> str:
+    """
+    Normalize any MIS/raw store name to canonical Google Sheet name.
+    'The Artist Tree - Fresno Shaw' → 'Fresno (Shaw)'
+    'Beverly' → 'Beverly Hills', etc.
+    Monolith: line 2855.
+    """
+    if not raw_name:
+        return raw_name
+    clean = str(raw_name).strip()
+    if not clean:
+        return clean
+    if clean in STORE_MAPPING:
+        return STORE_MAPPING[clean]
+    clean_lower = clean.lower()
+    if clean_lower in _STORE_MAPPING_LOWER:
+        return _STORE_MAPPING_LOWER[clean_lower]
+    stripped = re.sub(
+        r"^(The Artist Tree|Davisville Business Enterprises,?\s*Inc\.?|Club 420)\s*[-\u2013\u2014]?\s*",
+        "", clean, flags=re.IGNORECASE
+    ).strip()
+    if stripped in STORE_MAPPING:
+        return STORE_MAPPING[stripped]
+    stripped_lower = stripped.lower()
+    if stripped_lower in _STORE_MAPPING_LOWER:
+        return _STORE_MAPPING_LOWER[stripped_lower]
+    return stripped
+
+
+
 # Added additively — scrape_blaze_data_from_browser() calls these at line 299.
 
 def load_groups() -> dict:
@@ -87,6 +167,16 @@ def load_stored_token() -> Optional[str]:
     except Exception as e:
         print(f"[WARN] Failed to load stored token: {e}")
     return None
+
+
+def save_stored_token(token: str) -> None:
+    """Saves the Blaze token to blaze_token.json. Monolith: line 3271."""
+    try:
+        with open(BLAZE_TOKEN_FILE, 'w') as f:
+            json.dump({'token': token, 'updated': str(datetime.now())}, f)
+        print("[INFO] Blaze token saved to file.")
+    except Exception as e:
+        print(f"[WARN] Failed to save token: {e}")
 
 
 def validate_token(token: str) -> bool:
@@ -302,6 +392,7 @@ def scrape_blaze_data_from_browser():
             sniff_opts = webdriver.ChromeOptions()
             sniff_opts.add_argument(f'user-data-dir={_get_chrome_profile_dir()}')
             sniff_opts.add_argument('profile-directory=Default')
+            sniff_opts.add_argument('--headless=new')          # run invisible — no window
             sniff_opts.add_argument('--no-sandbox')
             sniff_opts.add_argument('--disable-dev-shm-usage')
             sniff_opts.add_argument('--disable-blink-features=AutomationControlled')

@@ -361,10 +361,12 @@ def init_browser(debug_port: int = 9222):
 
         # NOTE: add_experimental_option("prefs") is launch-time only — silently ignored
         # on attach. Must set download directory via CDP instead.
+        # Page.setDownloadBehavior was removed in Chrome ~109; use Browser.setDownloadBehavior.
         try:
-            driver.execute_cdp_cmd('Page.setDownloadBehavior', {
+            driver.execute_cdp_cmd('Browser.setDownloadBehavior', {
                 'behavior':     'allow',
                 'downloadPath': str(MIS_REPORTS_DIR),
+                'eventsEnabled': True,
             })
             print(f"[INIT] ✓ Download directory set via CDP: {MIS_REPORTS_DIR}")
         except Exception as cdp_err:
