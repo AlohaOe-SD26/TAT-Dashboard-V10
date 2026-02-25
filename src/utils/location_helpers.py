@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import re
-from typing import Tuple, Optional
+from typing import Any, Tuple, Optional
 
 import pandas as pd
 
@@ -162,19 +162,176 @@ def resolve_to_store_set(location_string: str) -> frozenset:
     if not location_string or str(location_string).strip().lower() in (
             '', 'nan', 'none', '-', 'n/a', 'not specified'):
         return frozenset(ALL_STORES_SET)
-    s = str(location_string).strip()
-    except_stores = _extract_except_stores(s)
-    if except_stores is not None:
-        included = ALL_STORES_SET - frozenset(except_stores)
-        return frozenset(included) if included else frozenset(ALL_STORES_SET)
-    if s.lower() in ('all locations', 'all'):
+    store_set, _, _ = parse_locations(location_string)
+    if not store_set:
         return frozenset(ALL_STORES_SET)
-    stores = {normalize_store_name(st.strip()) for st in s.split(',') if st.strip()}
-    stores &= ALL_STORES_SET
-    return frozenset(stores) if stores else frozenset(ALL_STORES_SET)
+    return frozenset(store_set)
 
 
-# ── Monolith: line 5123 ───────────────────────────────────────────────────────
+# ── Monolith: line 2311 ───────────────────────────────────────────────────────
+
+def parse_locations(location_str: str) -> tuple[set, bool, set]:
+    """
+    Parse location string into (store_set, is_all_except, excluded_stores).
+    Handles: 'All Locations', 'All Locations Except: X, Y', 'Store1, Store2'.
+    v12.26.1: Normalizes all store names via normalize_store_name().
+    v12.26.2: Detects 'All Locations Except:' ANYWHERE in string.
+    Monolith: line 2311.
+    """
+    if not location_str or location_str == '-':
+        return set(), False, set()
+    location_str = str(location_str).strip()
+    except_stores = _extract_except_stores(location_str)
+    if except_stores is not None:
+        excluded  = set(except_stores)
+        included  = ALL_STORES_SET - excluded
+        return included, True, excluded
+    if location_str.lower() in ('all locations', 'all'):
+        return set(ALL_STORES_SET), False, set()
+    stores = {normalize_store_name(s.strip()) for s in location_str.split(',') if s.strip()}
+    return stores, False, set()
+
+
+# ── Monolith: line 2354 ───────────────────────────────────────────────────────
+
+def calculate_location_conflict(
+    weekly_locations: str, tier1_locations: str
+) -> tuple[bool, set, set, str]:
+    """
+    Calculate if locations overlap and return conflict type and details.
+    Returns: (has_conflict, conflict_stores, non_conflict_stores, conflict_type)
+    conflict_type: 'FULL' | 'PARTIAL' | 'NONE'
+    Monolith: line 2354.
+    """
+    weekly_set, _, _  = parse_locations(weekly_locations)
+    tier1_set,  _, _  = parse_locations(tier1_locations)
+    conflicting       = weekly_set & tier1_set
+    if not conflicting:
+        return False, set(), set(), 'NONE'
+    non_conflicting = weekly_set - tier1_set
+    if non_conflicting:
+        return True, conflicting, non_conflicting, 'PARTIAL'
+    return True, conflicting, set(), 'FULL'
+
+
+# ── Monolith: line 2380 ───────────────────────────────────────────────────────
+
+def format_location_set(stores: set, original_weekly_locations: str = '') -> str:
+    """
+    Format a set of store names back into a display string.
+    Collapses to 'All Locations' when all 12 stores are present.
+    Monolith: line 2380.
+    """
+    if not stores:
+        return '-'
+    stores_set      = set(stores)
+    all_locs_set    = set(ALL_LOCATIONS)
+    if stores_set == all_locs_set:
+        return 'All Locations'
+    excluded = all_locs_set - stores_set
+    if excluded and len(excluded) < len(stores_set):
+        return f"All Locations Except: {', '.join(sorted(excluded))}"
+    return ', '.join(sorted(stores_set))
+
+
+# ── Monolith: line 6132 ───────────────────────────────────────────────────────
+
+def format_csv_locations(locations_raw: str, exceptions_raw: str) -> str:
+    """
+    Parse Google Sheet location columns and return CSV-formatted string.
+    1. All Locations, no exceptions → '' (blank — MIS uses blank for 'all')
+    2. All Locations + exceptions   → all CSV stores minus exceptions
+    3. Specific stores              → mapped comma-separated list
+    Monolith: line 6132.
+    """
+    loc_str = str(locations_raw).strip()
+    exc_str = str(exceptions_raw).strip()
+    is_all  = 'all locations' in loc_str.lower()
+    final: set = set()
+    if is_all:
+        if not exc_str or exc_str.lower() in ('nan', 'none', ''):
+            return ''
+        final = set(CSV_TARGET_STORES)
+        for e in (e.strip() for e in exc_str.split(',') if e.strip()):
+            mapped = STORE_MAPPING.get(e, e)
+            final.discard(mapped)
+    else:
+        for r in (r.strip() for r in loc_str.split(',') if r.strip()):
+            if r in STORE_MAPPING:
+                final.add(STORE_MAPPING[r])
+            elif r in CSV_TARGET_STORES:
+                final.add(r)
+    return ', '.join(sorted(final))
+
+
+# ── Monolith: line 27214 ─────────────────────────────────────────────────────
+
+def find_locations_value(row: Any, columns: list) -> str:
+    """
+    Find locations value from a row using resolve_location_columns for consistency.
+    Falls back to scanning column names when the primary resolver fails.
+    Monolith: line 27214.
+    """
+    try:
+        loc_raw, exc_raw = resolve_location_columns(row)
+        result = format_location_display(loc_raw, exc_raw)
+        if result and result.lower() not in ('', '-', 'nan', 'none'):
+            print(f"[LOCATION] Resolved via resolve_location_columns: '{result}'")
+            return result
+    except Exception as e:
+        print(f"[LOCATION] resolve_location_columns failed: {e}, falling back")
+
+    priority_names = [
+        'Locations (Discount Applies at)', 'Locations', 'Location',
+        'Store Locations', 'Stores',
+    ]
+
+    def _clean(val: Any) -> str:
+        if val is None:
+            return ''
+        try:
+            import pandas as _pd
+            if _pd.isna(val):
+                return ''
+        except Exception:
+            pass
+        s = str(val).strip()
+        return '' if s.lower() in ('nan', 'none', 'null', '-') else s
+
+    for col in priority_names:
+        if col in columns:
+            v = _clean(row.get(col, ''))
+            if v:
+                print(f"[LOCATION] Found in column '{col}': '{v}'")
+                return v
+
+    for col in columns:
+        cl = col.lower()
+        if ('location' in cl or 'store' in cl) and 'marketing' not in cl:
+            v = _clean(row.get(col, ''))
+            if v:
+                print(f"[LOCATION] Found in column '{col}': '{v}'")
+                return v
+
+    loc_cols = [c for c in columns if 'location' in c.lower() or 'store' in c.lower()]
+    print(f"[LOCATION] WARNING: No locations value found! Available: {loc_cols}")
+    return 'All Locations'
+
+
+# ── Monolith: line 35258 ─────────────────────────────────────────────────────
+
+def convert_store_name_to_data_cy(store_name: str) -> str:
+    """
+    Convert store display name to data-cy format for Selenium targeting.
+    'The Artist Tree - Koreatown' → 'lbl-TheArtistTree-Koreatown'
+    Monolith: line 35258.
+    """
+    parts = store_name.split(' - ')
+    if len(parts) == 2:
+        company  = parts[0].replace(' ', '')
+        location = parts[1].replace(' ', '')
+        return f'lbl-{company}-{location}'
+    return f"lbl-{store_name.replace(' ', '').replace('-', '')}"
 
 def format_location_display(locations: str, exceptions: str) -> str:
     """

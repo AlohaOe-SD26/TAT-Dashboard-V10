@@ -32,6 +32,25 @@ def create_app(config_override: dict | None = None) -> Flask:
     _init_active_profile()
     _register_blueprints(app)
 
+    # ── Fix 7: Background validation monitor thread ───────────────────────────
+    import threading as _threading
+
+    def _launch_monitor() -> None:
+        with app.app_context():
+            try:
+                from src.api.blaze import background_validation_monitor
+                t = _threading.Thread(
+                    target=background_validation_monitor,
+                    name='validation-monitor',
+                    daemon=True,
+                )
+                t.start()
+                print("[APP] ✓ background_validation_monitor started")
+            except Exception as _e:
+                print(f"[APP] ⚠ Could not start validation monitor: {_e}")
+
+    _threading.Thread(target=_launch_monitor, daemon=True).start()
+
     return app
 
 
