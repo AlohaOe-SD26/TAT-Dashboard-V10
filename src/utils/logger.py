@@ -70,3 +70,26 @@ def get_logger(name: str = 'blaze_mis') -> logging.Logger:
     if not logger.handlers:
         return setup_logger(name)
     return logger
+
+
+def console_log(message: str, level: str = 'INFO', logger_name: str = 'blaze_mis') -> None:
+    """
+    Emit a timestamped console message via both print() (for real-time headless
+    visibility) and the named logger (for file persistence).
+    level: 'INFO' | 'WARN' | 'WARNING' | 'ERROR' | 'DEBUG'
+    v10: public utility function required by src/utils/__init__.py.
+    """
+    from datetime import datetime
+    tag     = f"[{datetime.now().strftime('%H:%M:%S')}] [{level.upper()}]"
+    message = str(message)
+    print(f"{tag} {message}")
+    lg = get_logger(logger_name)
+    level_upper = level.upper()
+    if level_upper in ('WARN', 'WARNING'):
+        lg.warning(message)
+    elif level_upper == 'ERROR':
+        lg.error(message)
+    elif level_upper == 'DEBUG':
+        lg.debug(message)
+    else:
+        lg.info(message)

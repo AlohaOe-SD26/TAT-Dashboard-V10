@@ -40,10 +40,12 @@ def api_mis_audit():
     Monolith: line 26519.
     """
     try:
-        tab_name = request.form.get('tab')
+        tab_name = (request.form.get('tab') or '').strip()
+        if not tab_name:
+            tab_name = session.get_mis_current_sheet() or ''
         csv_file = request.files.get('csv')
         if not tab_name:
-            return jsonify({'success': False, 'error': 'No tab selected'})
+            return jsonify({'success': False, 'error': 'No tab selected. Please select a Google Sheet tab in the Settings section first.'})
         mis_df = None
         if csv_file:
             mis_df = pd.read_csv(csv_file)
@@ -84,11 +86,13 @@ def maudit():
     Groups results: verified / mismatches / not_found / missing_id.
     """
     try:
-        tab_name       = request.form.get('tab')
+        tab_name       = (request.form.get('tab') or '').strip()
+        if not tab_name:
+            tab_name = session.get_mis_current_sheet() or ''
         local_csv_path = request.form.get('local_csv_path')
 
         if not tab_name:
-            return jsonify({'success': False, 'error': 'No tab selected'})
+            return jsonify({'success': False, 'error': 'No tab selected. Please select a Google Sheet tab in the Settings section first.'})
 
         mis_df = resolve_mis_csv(
             csv_file_obj=request.files.get('csv'),
@@ -218,12 +222,14 @@ def cleanup_audit():
     from src.utils.csv_resolver import resolve_mis_csv_for_route
 
     try:
-        tab_name       = request.form.get('tab', '').strip()
+        tab_name       = (request.form.get('tab') or '').strip()
+        if not tab_name:
+            tab_name = session.get_mis_current_sheet() or ''
         csv_file       = request.files.get('csv')
         local_csv_path = request.form.get('local_csv_path', '').strip()
 
         if not tab_name:
-            return jsonify({'success': False, 'error': 'No tab selected'})
+            return jsonify({'success': False, 'error': 'No tab selected. Please select a Google Sheet tab in the Settings section first.'})
 
         # Load MIS CSV
         mis_df = resolve_mis_csv_for_route(

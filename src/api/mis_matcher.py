@@ -80,6 +80,8 @@ def generate_csv():
             return jsonify({'success': False, 'error': 'No tab selected'})
 
         spreadsheet_id = session.get_spreadsheet_id()
+        # Persist tab so Audit / Matcher routes can recover it without re-selection
+        session.set_mis_current_sheet(tab_name)
         sections_data  = fetch_google_sheet_data(tab_name)
         session.set('sections_data_raw', json.dumps({k: v.to_json() for k, v in sections_data.items()}))
 

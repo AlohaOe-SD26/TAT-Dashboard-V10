@@ -147,3 +147,25 @@ class SQLiteBackend(StorageBackend):
                 conn.commit()
             except sqlite3.Error as e:
                 print(f"[SESSION-DB] Clear error: {e}")
+
+
+# ── Factory function — required by src/session/__init__.py ───────────────────
+
+def build_backend(
+    backend_type: str = 'sqlite',
+    db_path: Optional[Path | str] = None,
+    **kwargs,
+) -> StorageBackend:
+    """
+    Factory: build and return the appropriate StorageBackend.
+    backend_type: 'sqlite' (default) | 'memory'
+    db_path: override the default SQLite path (optional).
+    v10: public factory required by src/session/__init__.py.
+    """
+    if backend_type == 'memory':
+        # In-memory SQLite: no persistence, useful for tests
+        return SQLiteBackend(db_path=':memory:')
+    # Default: file-backed SQLite
+    if db_path is not None:
+        return SQLiteBackend(db_path=db_path)
+    return SQLiteBackend()  # uses _PROJECT_ROOT / 'config' / 'session.db'

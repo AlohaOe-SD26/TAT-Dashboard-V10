@@ -1132,8 +1132,8 @@ btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Running.
 document.getElementById('audit-results').innerHTML = '<div class="text-center p-4"><div class="spinner-border text-primary"></div><div class="mt-2">Auditing Data...</div></div>';
 
 try {
-    // Get current tab selection from dropdown (not stale misData.tabName)
-    const currentTab = document.getElementById('mis-tab').value;
+    // Get tab from dropdown; fall back to the last tab used for CSV/matching
+    const currentTab = document.getElementById('mis-tab').value || misData.tabName || '';
     
     if (!currentTab) {
         document.getElementById('audit-results').innerHTML = 
@@ -1288,7 +1288,7 @@ if (weekdayNames.some(d => lowerWeekday.includes(d))) {
 const dayNumbers = parseDayOfMonthValues(weekdayCol);
 if (dayNumbers.length > 0) {
     // Get current tab's month/year context
-    const tabName = document.getElementById('mis-tab')?.value || '';
+    const tabName = document.getElementById('mis-tab')?.value || misData.tabName || '';
     const monthYear = parseTabNameToMonthYear(tabName);
     
     if (monthYear) {
@@ -1413,7 +1413,7 @@ const specificDate = mode === 'custom' ? document.getElementById('auditSpecificD
 
 // Update state
 comprehensiveAuditState.settings = { mode, sections, weekdays, specificDate };
-comprehensiveAuditState.tabName = document.getElementById('mis-tab')?.value || 'Unknown';
+comprehensiveAuditState.tabName = document.getElementById('mis-tab')?.value || misData.tabName || 'Unknown';
 
 // Filter deals based on settings
 let filteredDeals = matchesData.filter(match => {
@@ -2594,7 +2594,7 @@ localStorage.setItem('comprehensiveAuditState', JSON.stringify(payload));
 
 // Load audit state from server
 async function loadAuditStateFromServer() {
-const tabName = document.getElementById('mis-tab')?.value || '';
+const tabName = document.getElementById('mis-tab')?.value || misData.tabName || '';
 
 try {
 const data = await apiGet(`/api/audit/load-state?tab=${encodeURIComponent(tabName)}`);
