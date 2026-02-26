@@ -329,7 +329,7 @@ async function runCleanupAudit() {
     idOnlyResultsEl.innerHTML = '<div class="text-center p-4"><div class="spinner-border text-primary"></div><div class="mt-2">Scanning MIS CSV for stale entries...</div></div>';
     
     try {
-        const tab = document.getElementById('mis-tab').value;
+        const tab = document.getElementById('mis-tab').value || (typeof misData !== 'undefined' ? misData.tabName : '') || '';
         if (!tab) {
             alert('Please select a sheet tab in Setup first');
             statsEl.textContent = 'Ready';
@@ -478,6 +478,9 @@ document.getElementById('conflict-stats').innerText = 'Scanning...';
 
 try {
     const formData = new FormData();
+    // Tab is required by the backend — read from DOM or misData fallback
+    const conflictTab = document.getElementById('mis-tab').value || (typeof misData !== 'undefined' ? misData.tabName : '') || '';
+    if (conflictTab) formData.append('tab', conflictTab);
     // Attach active CSV if available
     if (misData.csvFile) {
         formData.append('csv', misData.csvFile);

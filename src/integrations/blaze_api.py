@@ -55,6 +55,15 @@ except ImportError:
 
 # ── Module-level constants (were globals in the monolith) ────────────────────
 BASE_DIR         = Path(__file__).resolve().parent.parent.parent  # project root
+
+# Monolith line 2792
+PRIORITY_MAP: dict[int, str] = {
+    1: "1 - Highest",
+    2: "2 - High",
+    3: "3 - Medium",
+    4: "4 - Low",
+    5: "5 - Lowest",
+}
 REPORTS_DIR      = BASE_DIR / 'reports'
 GROUPS_FILE      = BASE_DIR / 'promotion_groups.json'
 BLAZE_TOKEN_FILE = BASE_DIR / 'blaze_token.json'

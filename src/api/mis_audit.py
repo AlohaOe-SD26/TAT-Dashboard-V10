@@ -18,6 +18,50 @@ from flask import Blueprint, jsonify, request
 
 from src.session import session
 from src.integrations.google_sheets import fetch_google_sheet_data, parse_tab_month_year
+
+
+# ── Tab resolution helper ─────────────────────────────────────────────────────
+
+def _resolve_tab(form_tab: str) -> str:
+    """
+    Resolve the active Google Sheet tab name with three-tier fallback:
+    1. Value explicitly sent in the request form/JSON (most reliable)
+    2. SessionManager.get_mis_current_sheet() (written by select-tab route)
+    3. Direct SQLite read — bypasses SessionManager in case of threading/singleton issues
+    Returns '' if nothing found.
+    """
+    tab = (form_tab or '').strip()
+    if tab:
+        return tab
+
+    # Tier 2: SessionManager
+    tab = (session.get_mis_current_sheet() or '').strip()
+    if tab:
+        return tab
+
+    # Tier 3: raw SQLite read — independent of SessionManager instance
+    try:
+        import sqlite3 as _sqlite3
+        _db = Path(__file__).resolve().parent.parent.parent / 'config' / 'session.db'
+        if _db.exists():
+            con = _sqlite3.connect(str(_db), timeout=3)
+            row = con.execute(
+                "SELECT value FROM kv_store WHERE key = 'mis_current_sheet'"
+            ).fetchone()
+            con.close()
+            if row:
+                import json as _json
+                raw = row[0]
+                try:
+                    raw = _json.loads(raw)
+                except Exception:
+                    pass
+                tab = str(raw).strip()
+    except Exception as _e:
+        print(f"[AUDIT] Direct DB tab read failed (non-fatal): {_e}")
+
+    return tab
+
 from src.utils.csv_resolver import resolve_mis_csv_for_route as resolve_mis_csv
 from src.utils.sheet_helpers import get_col
 from src.utils.location_helpers import format_location_display, resolve_location_columns
@@ -40,9 +84,7 @@ def api_mis_audit():
     Monolith: line 26519.
     """
     try:
-        tab_name = (request.form.get('tab') or '').strip()
-        if not tab_name:
-            tab_name = session.get_mis_current_sheet() or ''
+        tab_name = _resolve_tab(request.form.get('tab', ''))
         csv_file = request.files.get('csv')
         if not tab_name:
             return jsonify({'success': False, 'error': 'No tab selected. Please select a Google Sheet tab in the Settings section first.'})
@@ -86,9 +128,7 @@ def maudit():
     Groups results: verified / mismatches / not_found / missing_id.
     """
     try:
-        tab_name       = (request.form.get('tab') or '').strip()
-        if not tab_name:
-            tab_name = session.get_mis_current_sheet() or ''
+        tab_name       = _resolve_tab(request.form.get('tab', ''))
         local_csv_path = request.form.get('local_csv_path')
 
         if not tab_name:
@@ -222,9 +262,7 @@ def cleanup_audit():
     from src.utils.csv_resolver import resolve_mis_csv_for_route
 
     try:
-        tab_name       = (request.form.get('tab') or '').strip()
-        if not tab_name:
-            tab_name = session.get_mis_current_sheet() or ''
+        tab_name       = _resolve_tab(request.form.get('tab', ''))
         csv_file       = request.files.get('csv')
         local_csv_path = request.form.get('local_csv_path', '').strip()
 

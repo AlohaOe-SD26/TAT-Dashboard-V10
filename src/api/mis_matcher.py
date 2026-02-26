@@ -51,6 +51,26 @@ def load_sheet():
         return jsonify({'success': False, 'error': str(e)})
 
 
+@bp.route('/api/mis/select-tab', methods=['POST'])
+def api_mis_select_tab():
+    """
+    Lightweight route: persist the user's tab selection to session.
+    Called by saveTabToSession() in JS whenever mis-tab dropdown changes.
+    No browser or sheet interaction — just a session write.
+    """
+    try:
+        data     = request.get_json() or {}
+        tab_name = (data.get('tab') or '').strip()
+        if not tab_name:
+            return jsonify({'success': False, 'error': 'tab required'})
+        session.set_mis_current_sheet(tab_name)
+        print(f"[SELECT-TAB] Session tab → '{tab_name}'")
+        return jsonify({'success': True, 'tab': tab_name})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
+
+
 @bp.route('/api/mis/init-sheet-page', methods=['POST'])
 def api_mis_init_sheet_page():
     """Open a Google Sheet tab in the automated browser. Monolith: line 24372."""

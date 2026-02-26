@@ -2,6 +2,27 @@
 // DataTables initialization, search enhancements, OTD price modal, audit row rendering
 // Extracted from monolith v12.27 by Step 7
 
+/**
+ * saveTabToSession — fire-and-forget POST to persist the selected tab name in
+ * Flask session so Audit/Matcher routes can recover it without requiring the
+ * user to click "Open Sheet".
+ */
+async function saveTabToSession(tabName) {
+    if (!tabName) return;
+    try {
+        await fetch('/api/mis/select-tab', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tab: tabName }),
+        });
+        console.log('[TAB-PERSIST] Tab saved to session:', tabName);
+    } catch (e) {
+        // Non-fatal — session fallback is best-effort
+        console.warn('[TAB-PERSIST] Could not persist tab to session:', e.message);
+    }
+}
+
+
 function setupSearchEnhancements() {
 // Find all search inputs
 document.querySelectorAll('input[type="search"]').forEach(searchInput => {
@@ -126,6 +147,7 @@ async function autoLoadSheetTabs() {
             renderTabOptions();
             if (document.getElementById('mis-tab').options.length > 0) {
                 misData.tabName = document.getElementById('mis-tab').value;
+                saveTabToSession(misData.tabName);  // persist to backend session
             }
             console.log('[AUTO-LOAD] Sheet tabs loaded successfully');
         } else {
@@ -348,6 +370,21 @@ function renderTabOptions() {
         select.value = currentSelection;
     } else if (filteredTabs.length > 0) {
         select.value = filteredTabs[0];
+    }
+
+    // Persist final selection to session and misData
+    if (select.value) {
+        misData.tabName = select.value;
+        saveTabToSession(select.value);
+    }
+
+    // Wire onchange only once (guard prevents duplicate listeners)
+    if (!select._tabPersistWired) {
+        select.addEventListener('change', () => {
+            misData.tabName = select.value;
+            saveTabToSession(select.value);
+        });
+        select._tabPersistWired = true;
     }
 }
 

@@ -152,20 +152,29 @@ class SQLiteBackend(StorageBackend):
 # ── Factory function — required by src/session/__init__.py ───────────────────
 
 def build_backend(
+    config=None,
     backend_type: str = 'sqlite',
     db_path: Optional[Path | str] = None,
     **kwargs,
 ) -> StorageBackend:
     """
     Factory: build and return the appropriate StorageBackend.
-    backend_type: 'sqlite' (default) | 'memory'
-    db_path: override the default SQLite path (optional).
-    v10: public factory required by src/session/__init__.py.
+
+    Called by session/__init__.py as:  build_backend(app.config)
+    Also supports keyword usage:        build_backend(backend_type='sqlite')
+
+    config: Flask app.config dict (reads SESSION_BACKEND, SESSION_DB_PATH)
+            OR a plain string backend type for direct usage.
     """
+    # Unpack Flask config dict passed as first positional arg
+    if config is not None and hasattr(config, 'get'):
+        backend_type = config.get('SESSION_BACKEND', 'sqlite')
+        db_path      = config.get('SESSION_DB_PATH', db_path)
+    elif isinstance(config, str):
+        backend_type = config  # build_backend('sqlite') or build_backend('memory')
+
     if backend_type == 'memory':
-        # In-memory SQLite: no persistence, useful for tests
         return SQLiteBackend(db_path=':memory:')
-    # Default: file-backed SQLite
     if db_path is not None:
         return SQLiteBackend(db_path=db_path)
-    return SQLiteBackend()  # uses _PROJECT_ROOT / 'config' / 'session.db'
+    return SQLiteBackend()  # default: _PROJECT_ROOT / 'config' / 'session.db'
