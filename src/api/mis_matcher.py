@@ -238,7 +238,7 @@ def match():
     Accepts either uploaded CSV file or previously pulled CSV from session.
     """
     try:
-        tab_name = request.form.get('tab')
+        tab_name = request.form.get('tab') or session.get_mis_current_sheet()
         csv_file = request.files.get('csv')
 
         if not tab_name:

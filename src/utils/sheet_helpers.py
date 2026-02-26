@@ -1,45 +1,201 @@
-# =============================================================================
 # src/utils/sheet_helpers.py
-# Step 6: Sheet utility functions — session-aware get_col, MIS ID parsing,
-# numeric helpers, and spreadsheet utilities.
-#
-# KEY DESIGN: get_col() is session-aware. It reads bracket_map / prefix_map
-# from SessionManager rather than GLOBAL_DATA, making it multi-request safe.
-# =============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
+# Google Sheet parsing helpers.
+# Extracted from monolith (main_-_bloat.py) lines 4709, 25669, 32843, 32953.
+# ─────────────────────────────────────────────────────────────────────────────
+
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
+
 import pandas as pd
 
 
-# ── Column Resolution ─────────────────────────────────────────────────────────
-
-def get_col(
-    row: pd.Series,
-    possible_names: List[str],
-    default: Any = '',
-    bracket_map: Dict[str, str] | None = None,
-    prefix_map: Dict[str, str] | None = None,
-) -> Any:
+def detect_header_row(sheet_data: List[List[str]]) -> int:
     """
-    v12.27.0: Enhanced with bracket header alias resolution + prefix fallback.
-    Session-aware: accepts bracket_map and prefix_map explicitly instead of
-    reading from GLOBAL_DATA — callers pass session maps in.
+    Detect the header row index by scanning for key column names.
+    Scans first 10 rows for keywords like 'Brand', 'Deal', 'Discount'.
+    Returns the index of the first row with 3+ keyword matches, else 0.
+    Monolith: line 4709.
+    """
+    key_columns = ['Brand', 'Weekday', 'Deal', 'Discount', 'Location']
+    for row_idx, row in enumerate(sheet_data[:10]):
+        row_str = ' '.join([str(cell).strip() for cell in row]).lower()
+        matches = sum(1 for keyword in key_columns if keyword.lower() in row_str)
+        if matches >= 3:
+            return row_idx
+    return 0
+
+
+def get_col_letter(n: int) -> str:
+    """
+    Convert a zero-based column index to a spreadsheet column letter.
+    e.g. 0 → 'A', 25 → 'Z', 26 → 'AA'.
+    Monolith: line 25669.
+    """
+    string = ""
+    while n >= 0:
+        string = chr((n % 26) + 65) + string
+        n = (n // 26) - 1
+    return string
+
+
+def update_tagged_mis_cell(
+    existing_content: str,
+    tag: str,
+    new_id: str,
+    append_mode: bool = False,
+) -> str:
+    """
+    Update a specific tag in a MIS ID cell, preserving other tag lines.
+
+    Tags: 'w1', 'w2', 'wp', 'm1', 'm2', 'mp', 's1', 's2', 'sp'
+    (legacy tags 'part1', 'part2', 'gap', 'patch' also supported).
+
+    append_mode=True: always append a new line even if tag already exists.
+    append_mode=False: replace existing matching tag line.
+    Monolith: line 32843.
+    """
+    if not new_id or not str(new_id).strip():
+        return existing_content
+
+    new_id = str(new_id).strip()
+    tag_lower = tag.lower().strip()
+    new_id = strip_mis_id_tag(new_id)
+
+    existing_lines: list[str] = []
+    if existing_content:
+        existing_lines = [
+            l.strip()
+            for l in existing_content.replace('\r\n', '\n').split('\n')
+            if l.strip()
+        ]
+
+    TAG_MAP: dict[str, tuple[str, str]] = {
+        'w1': ('W1', 'w1'), 'weekly1': ('W1', 'w1'), 'weekly_1': ('W1', 'w1'),
+        'w2': ('W2', 'w2'), 'weekly2': ('W2', 'w2'), 'weekly_2': ('W2', 'w2'),
+        'w3': ('W3', 'w3'), 'weekly3': ('W3', 'w3'), 'weekly_3': ('W3', 'w3'),
+        'wp': ('WP', 'wp'), 'weekly_patch': ('WP', 'wp'), 'weeklypatch': ('WP', 'wp'),
+        'm1': ('M1', 'm1'), 'monthly1': ('M1', 'm1'), 'monthly_1': ('M1', 'm1'),
+        'm2': ('M2', 'm2'), 'monthly2': ('M2', 'm2'), 'monthly_2': ('M2', 'm2'),
+        'm3': ('M3', 'm3'), 'monthly3': ('M3', 'm3'), 'monthly_3': ('M3', 'm3'),
+        'mp': ('MP', 'mp'), 'monthly_patch': ('MP', 'mp'), 'monthlypatch': ('MP', 'mp'),
+        's1': ('S1', 's1'), 'sale1': ('S1', 's1'), 'sale_1': ('S1', 's1'),
+        's2': ('S2', 's2'), 'sale2': ('S2', 's2'), 'sale_2': ('S2', 's2'),
+        's3': ('S3', 's3'), 'sale3': ('S3', 's3'), 'sale_3': ('S3', 's3'),
+        'sp': ('SP', 'sp'), 'sale_patch': ('SP', 'sp'), 'salepatch': ('SP', 'sp'),
+        # legacy
+        'part1': ('W1', 'w1'), 'part_1': ('W1', 'w1'), 'part 1': ('W1', 'w1'),
+        'part2': ('W2', 'w2'), 'part_2': ('W2', 'w2'), 'part 2': ('W2', 'w2'),
+        'gap':   ('M1', 'm1'),
+        'patch': ('WP', 'wp'),
+    }
+
+    prefix_label, tag_prefix = TAG_MAP.get(tag_lower, ('W1', 'w1'))
+    new_line = f"{prefix_label}: {new_id}"
+
+    found = False
+    result_lines: list[str] = []
+    for line in existing_lines:
+        line_lower = line.lower()
+        if line_lower.startswith(tag_prefix + ':') or line_lower.startswith(tag_prefix + ' :'):
+            if append_mode:
+                result_lines.append(line)
+            else:
+                result_lines.append(new_line)
+                found = True
+        else:
+            result_lines.append(line)
+
+    if not found or append_mode:
+        result_lines.append(new_line)
+
+    return '\n'.join(result_lines)
+
+
+def strip_mis_id_tag(tagged_id: str) -> str:
+    """
+    Strip any tag prefix from a MIS ID for display or lookup.
+
+    Examples:
+        'W1: 12345' -> '12345'
+        'WP: 67890' -> '67890'
+        '12345'     -> '12345'
+
+    Monolith: line 32953.
+    """
+    if not tagged_id:
+        return ''
+    tagged_id = str(tagged_id).strip()
+    if ':' in tagged_id:
+        return tagged_id.split(':', 1)[1].strip()
+    return tagged_id
+
+
+def format_csv_categories(cat_raw: str, exc_raw: str) -> str:
+    """
+    Format category + exception fields for CSV output.
+
+    If 'All Categories' detected:
+      - Returns 'All Categories' or 'All Categories (Except: X)' for UI.
+      - CSV generator handles blanking this for the actual file.
+    Otherwise returns a cleaned comma-separated category string.
+    Monolith: line 6181.
+    """
+    cat_str = str(cat_raw).strip()
+    exc_str = str(exc_raw).strip()
+
+    if 'all categories' in cat_str.lower():
+        if exc_str and exc_str.lower() not in ['nan', 'none', '']:
+            return f"All Categories (Except: {exc_str})"
+        return "All Categories"
+
+    if not cat_str or cat_str.lower() in ['nan', 'none']:
+        return ""
+
+    return ", ".join([c.strip() for c in cat_str.split(',') if c.strip()])
+
+
+def parse_percentage(value: Any) -> float:
+    """
+    Parse a percentage value from a cell (e.g. '50%', '50', 50) → 50.0.
+    Returns 0.0 on any parse failure.
+    Monolith: line 5106.
+    """
+    if pd.isna(value):
+        return 0.0
+    val_str = str(value).strip().replace('%', '').replace(',', '')
+    try:
+        return float(val_str)
+    except Exception:
+        return 0.0
+
+
+def get_col(row: pd.Series, possible_names: List[str], default: Any = '') -> Any:
+    """
+    Flexible column accessor with bracket-header alias resolution.
 
     Resolution order for each name in possible_names:
-      1. bracket_map: '[Weekday]' → 'Weekday [Weekday]'
-      2. Exact match: 'Weekday' in row.index
-      3. prefix_map:  'Weekday' → 'Weekday [Weekday]' (old names → bracket col)
+      1. bracket_map: '[Weekday]' → 'Weekday [Weekday]'  (from session)
+      2. Exact match in row.index
+      3. prefix_map:  'Weekday' → 'Weekday [Weekday]'   (from session)
 
-    Falls through to next name if current name does not resolve.
+    Falls through to next name if current name doesn't resolve.
+    Monolith: line 4849 (adapted: GLOBAL_DATA → session).
     """
-    bmap = bracket_map or {}
-    pmap = prefix_map or {}
+    # Lazy import to avoid circular dependency at module load time
+    try:
+        from src.session import session as _session
+        bracket_map: dict = _session.get_mis_bracket_map() or {}
+        prefix_map: dict = _session.get_mis_prefix_map() or {}
+    except Exception:
+        bracket_map = {}
+        prefix_map = {}
 
     for name in possible_names:
-        # 1. Bracket alias resolution
-        resolved = bmap.get(name)
+        # 1. Bracket alias
+        resolved = bracket_map.get(name)
         if resolved and resolved in row.index:
             val = row[resolved]
             if isinstance(val, pd.Series):
@@ -56,7 +212,7 @@ def get_col(
                 return val
 
         # 3. Prefix fallback
-        resolved_prefix = pmap.get(name)
+        resolved_prefix = prefix_map.get(name)
         if resolved_prefix and resolved_prefix in row.index:
             val = row[resolved_prefix]
             if isinstance(val, pd.Series):
@@ -67,299 +223,113 @@ def get_col(
     return default
 
 
-def get_col_session(
-    row: pd.Series,
-    possible_names: List[str],
-    default: Any = '',
-) -> Any:
-    """
-    Convenience wrapper: loads bracket_map / prefix_map from SessionManager
-    automatically. Use this in route handlers where session is available.
-    """
-    try:
-        from src.session import session
-        bmap = session.get_mis_bracket_map()
-        pmap = session.get_mis_prefix_map()
-    except Exception:
-        bmap, pmap = {}, {}
-    return get_col(row, possible_names, default, bracket_map=bmap, prefix_map=pmap)
-
-
-# ── Numeric Helpers ───────────────────────────────────────────────────────────
-
-def parse_percentage(value: Any) -> float:
-    """
-    Parse a percentage or float value from various string formats.
-    '50%' → 50.0, '50' → 50.0, NaN → 0.0
-    """
-    if pd.isna(value):
-        return 0.0
-    val_str = str(value).strip().replace('%', '').replace(',', '')
-    try:
-        return float(val_str)
-    except (ValueError, TypeError):
-        return 0.0
-
-
-# ── MIS ID Parsing ────────────────────────────────────────────────────────────
-
-def strip_mis_id_tag(tagged_id: str) -> str:
-    """
-    Strip any tag prefix from a MIS ID string.
-    'W1: 12345' → '12345'
-    'WP: 67890' → '67890'
-    'M1: 99999' → '99999'
-    '12345'     → '12345'
-    """
-    if not tagged_id:
-        return ''
-    s = str(tagged_id).strip()
-    if ':' in s:
-        return s.split(':', 1)[1].strip()
-    return s
-
-
-def parse_mis_id_cell(cell_value: str, section: str | None = None) -> Dict:
+def parse_mis_id_cell(cell_value: str, section: str | None = None) -> Dict[str, Any]:
     """
     Parse a Google Sheet MIS ID cell that may contain tagged IDs.
 
-    v10.8 FORMAT (newline-separated with section-based tags):
-        W1: 12345     (Weekly Original)
-        WP: 67890     (Weekly Patch)
-        W2: 54321     (Weekly Continuation)
-        M1: 99999 / MP: 88888 / M2: 77777
-        S1: 66666 / SP: 55555 / S2: 44444
+    v10.8 format (newline-separated, section-based tags):
+        W1: 12345  (Weekly Original)   WP: 67890  (Weekly Patch)
+        M1: 99999  (Monthly Original)  MP: 88888  (Monthly Patch)
+        S1: 66666  (Sale Original)     SP: 55555  (Sale Patch)
 
-    Returns dict:
-        weekly:   {parts: [...], patch: str|None}
-        monthly:  {parts: [...], patch: str|None}
-        sale:     {parts: [...], patch: str|None}
-        parts:    All parts combined (backward compat)
-        patches:  All patches combined
-        raw:      Original cell value
-        is_tagged: True if new tagged format detected
-        all_tagged: [(tag, id), ...] in order (multi-brand support)
+    Returns dict with keys:
+        'weekly', 'monthly', 'sale' → {'parts': [...], 'patch': str|None}
+        'parts', 'patches', 'gaps'  → combined lists (backward compat)
+        'raw', 'is_tagged', 'all_tagged', 'part1'
+    Monolith: line 32399.
     """
-    result: Dict = {
-        'weekly':   {'parts': [], 'patch': None},
-        'monthly':  {'parts': [], 'patch': None},
-        'sale':     {'parts': [], 'patch': None},
-        'parts':    [],
-        'patches':  [],
-        'gaps':     [],
-        'raw':      str(cell_value).strip() if cell_value else '',
+    result: Dict[str, Any] = {
+        'weekly':  {'parts': [], 'patch': None},
+        'monthly': {'parts': [], 'patch': None},
+        'sale':    {'parts': [], 'patch': None},
+        'parts':   [],
+        'patches': [],
+        'gaps':    [],
+        'raw':       str(cell_value).strip() if cell_value else '',
         'is_tagged': False,
         'all_tagged': [],
     }
 
     if not cell_value or str(cell_value).strip() in ['', 'nan', 'None', '-']:
+        print(f"[PARSE] Empty or invalid cell value: '{cell_value}'")
         return result
 
     raw = str(cell_value).strip()
+    print(f"[PARSE] Raw input: '{raw}'")
 
-    # Universal capture for multi-brand support
-    universal_pattern = r'([WwMmSs])([1-9Pp])\s*:\s*(\d+)'
-    for m in re.finditer(universal_pattern, raw):
-        tag = f"{m.group(1).upper()}{m.group(2).upper()}"
-        result['all_tagged'].append((tag, m.group(3)))
+    # Capture all tagged IDs in order (multi-brand support)
+    for m in re.finditer(r'([WwMmSs])([1-9Pp])\s*:\s*(\d+)', raw):
+        result['all_tagged'].append((f"{m.group(1).upper()}{m.group(2).upper()}", m.group(3)))
 
-    # Weekly parts W1, W2, …
-    for m in re.finditer(r'[Ww](\d+)\s*:\s*(\d+)', raw):
-        pnum, mid = int(m.group(1)), m.group(2)
-        while len(result['weekly']['parts']) < pnum:
-            result['weekly']['parts'].append(None)
-        result['weekly']['parts'][pnum - 1] = mid
-        if mid not in result['parts']:
-            result['parts'].append(mid)
-        result['is_tagged'] = True
+    def _fill_parts(pattern: str, section_key: str) -> None:
+        for m in re.finditer(pattern, raw):
+            part_num = int(m.group(1))
+            mis_id   = m.group(2)
+            print(f"[PARSE] Found {section_key[0].upper()}{part_num}: {mis_id}")
+            lst = result[section_key]['parts']
+            while len(lst) < part_num:
+                lst.append(None)
+            lst[part_num - 1] = mis_id
+            if mis_id not in result['parts']:
+                result['parts'].append(mis_id)
+            result['is_tagged'] = True
 
-    # Weekly patch WP
-    m = re.search(r'[Ww][Pp]\s*:\s*(\d+)', raw)
-    if m:
-        result['weekly']['patch'] = m.group(1)
-        result['patches'].append(m.group(1))
-        result['is_tagged'] = True
+    _fill_parts(r'[Ww](\d+)\s*:\s*(\d+)', 'weekly')
+    _fill_parts(r'[Mm](\d+)\s*:\s*(\d+)', 'monthly')
+    _fill_parts(r'[Ss](\d+)\s*:\s*(\d+)', 'sale')
 
-    # Monthly parts M1, M2, …
-    for m in re.finditer(r'[Mm](\d+)\s*:\s*(\d+)', raw):
-        pnum, mid = int(m.group(1)), m.group(2)
-        while len(result['monthly']['parts']) < pnum:
-            result['monthly']['parts'].append(None)
-        result['monthly']['parts'][pnum - 1] = mid
-        if mid not in result['parts']:
-            result['parts'].append(mid)
-        result['is_tagged'] = True
+    for sec_letter, sec_key in (('w', 'weekly'), ('m', 'monthly'), ('s', 'sale')):
+        m = re.search(rf'[{sec_letter}{sec_letter.upper()}][Pp]\s*:\s*(\d+)', raw)
+        if m:
+            mis_id = m.group(1)
+            print(f"[PARSE] Found {sec_letter.upper()}P: {mis_id}")
+            result[sec_key]['patch'] = mis_id
+            result['patches'].append(mis_id)
+            result['is_tagged'] = True
 
-    # Monthly patch MP
-    m = re.search(r'[Mm][Pp]\s*:\s*(\d+)', raw)
-    if m:
-        result['monthly']['patch'] = m.group(1)
-        result['patches'].append(m.group(1))
-        result['is_tagged'] = True
-
-    # Sale parts S1, S2, …
-    for m in re.finditer(r'[Ss](\d+)\s*:\s*(\d+)', raw):
-        pnum, mid = int(m.group(1)), m.group(2)
-        while len(result['sale']['parts']) < pnum:
-            result['sale']['parts'].append(None)
-        result['sale']['parts'][pnum - 1] = mid
-        if mid not in result['parts']:
-            result['parts'].append(mid)
-        result['is_tagged'] = True
-
-    # Sale patch SP
-    m = re.search(r'[Ss][Pp]\s*:\s*(\d+)', raw)
-    if m:
-        result['sale']['patch'] = m.group(1)
-        result['patches'].append(m.group(1))
-        result['is_tagged'] = True
-
-    # Legacy: Part 1, Part 2, …
+    # Legacy: Part 1, Part 2 → weekly
     for m in re.finditer(r'[Pp]art\s*(\d+)\s*:\s*(\d+)', raw):
-        pnum, mid = int(m.group(1)), m.group(2)
-        while len(result['weekly']['parts']) < pnum:
-            result['weekly']['parts'].append(None)
-        if result['weekly']['parts'][pnum - 1] is None:
-            result['weekly']['parts'][pnum - 1] = mid
-        if mid not in result['parts']:
-            result['parts'].append(mid)
+        part_num, mis_id = int(m.group(1)), m.group(2)
+        print(f"[PARSE] Found legacy Part {part_num}: {mis_id}")
+        lst = result['weekly']['parts']
+        while len(lst) < part_num:
+            lst.append(None)
+        if lst[part_num - 1] is None:
+            lst[part_num - 1] = mis_id
+        if mis_id not in result['parts']:
+            result['parts'].append(mis_id)
         result['is_tagged'] = True
 
     # Legacy: GAP
     for m in re.finditer(r'[Gg][Aa][Pp]\s*:\s*(\d+)', raw):
+        print(f"[PARSE] Found legacy GAP: {m.group(1)}")
         result['gaps'].append(m.group(1))
         result['is_tagged'] = True
 
     # Legacy: Patch (no section prefix)
     m = re.search(r'[Pp]atch\s*:\s*(\d+)', raw)
-    if m and result['weekly']['patch'] is None:
-        result['weekly']['patch'] = m.group(1)
-        result['patches'].append(m.group(1))
+    if m:
+        mis_id = m.group(1)
+        print(f"[PARSE] Found legacy Patch: {mis_id}")
+        if result['weekly']['patch'] is None:
+            result['weekly']['patch'] = mis_id
+        if mis_id not in result['patches']:
+            result['patches'].append(mis_id)
         result['is_tagged'] = True
 
-    # Plain numeric ID (no tags)
+    # Untagged plain numeric ID
     if not result['is_tagged']:
         m = re.match(r'^(\d{5,7})$', raw)
         if m:
-            mid = m.group(1)
-            result['weekly']['parts'].append(mid)
-            result['parts'].append(mid)
+            mis_id = m.group(1)
+            print(f"[PARSE] Found plain ID: {mis_id}")
+            result['weekly']['parts'].append(mis_id)
+            result['parts'].append(mis_id)
 
-    # Remove None sentinels
-    result['weekly']['parts']  = [p for p in result['weekly']['parts']  if p is not None]
-    result['monthly']['parts'] = [p for p in result['monthly']['parts'] if p is not None]
-    result['sale']['parts']    = [p for p in result['sale']['parts']    if p is not None]
+    # Strip None placeholders
+    for sec in ('weekly', 'monthly', 'sale'):
+        result[sec]['parts'] = [p for p in result[sec]['parts'] if p is not None]
+
     result['part1'] = result['parts'][0] if result['parts'] else None
-
+    print(f"[PARSE] Result: weekly={result['weekly']}, monthly={result['monthly']}, sale={result['sale']}")
     return result
-
-
-# ── Category Helpers ──────────────────────────────────────────────────────────
-
-def format_csv_categories(cat_raw: str, exc_raw: str) -> str:
-    """
-    Format category string for MIS CSV output.
-    'All Categories' → 'All Categories' (loop strips for actual CSV cell)
-    'Flower' → 'Flower'
-    """
-    cat_str = str(cat_raw).strip()
-    exc_str = str(exc_raw).strip()
-
-    if 'all categories' in cat_str.lower():
-        if exc_str and exc_str.lower() not in ('nan', 'none', ''):
-            return f'All Categories (Except: {exc_str})'
-        return 'All Categories'
-
-    if not cat_str or cat_str.lower() in ('nan', 'none'):
-        return ''
-    return ', '.join(c.strip() for c in cat_str.split(',') if c.strip())
-
-
-# ── Spreadsheet Utilities ─────────────────────────────────────────────────────
-
-def extract_spreadsheet_id(url: str) -> Optional[str]:
-    """Extract Google Sheets ID from a spreadsheet URL."""
-    m = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', url)
-    return m.group(1) if m else None
-
-
-def detect_header_row(sheet_data: List[List[str]]) -> int:
-    """
-    Detect header row index by scanning for key column name keywords.
-    Scans first 10 rows; returns 0 as safe fallback.
-    """
-    key_columns = ['Brand', 'Weekday', 'Deal', 'Discount', 'Location']
-    for row_idx, row in enumerate(sheet_data[:10]):
-        row_str = ' '.join(str(cell).strip() for cell in row).lower()
-        matches = sum(1 for kw in key_columns if kw.lower() in row_str)
-        if matches >= 3:
-            return row_idx
-    return 0
-
-
-def get_col_letter(n: int) -> str:
-    """Convert 0-based column index to Excel-style letter (0→A, 25→Z, 26→AA)."""
-    string = ''
-    while n >= 0:
-        string = chr((n % 26) + 65) + string
-        n = (n // 26) - 1
-    return string
-
-
-def resolve_rebate_type(
-    row: pd.Series,
-    rebate_type_columns: list | None = None,
-) -> str:
-    """
-    v12.27.0: Resolve Rebate Type from bracket header system.
-
-    When [Rebate Type] appears under both 'Wholesale?' and 'Retail?' columns,
-    checks which column has TRUE for the given row.
-
-    Falls back to legacy behavior (checking 'Wholesale'/'Retail' columns directly)
-    if rebate_type_columns is not provided.
-
-    Args:
-        row: A pandas Series (one Google Sheet row).
-        rebate_type_columns: List of full column names that carry [Rebate Type]
-            bracket headers (e.g. ['Wholesale? [Rebate type]', 'Retail? [Rebate type]']).
-            Pass session.get_mis_rebate_type_columns() from route layer.
-
-    Returns: 'Wholesale', 'Retail', or '' if neither/both/ambiguous.
-    """
-    truthy_values = {'TRUE', 'YES', '1', 'X', '✔', 'CHECKED'}
-
-    if rebate_type_columns:
-        results: dict[str, bool] = {}
-        for col_name in rebate_type_columns:
-            if col_name in row.index:
-                raw_val = row[col_name]
-                if hasattr(raw_val, 'iloc'):
-                    raw_val = raw_val.iloc[0] if len(raw_val) > 0 else ''
-                val = str(raw_val).strip().upper()
-                is_true = val in truthy_values
-                col_lower = col_name.lower()
-                if 'wholesale' in col_lower:
-                    results['Wholesale'] = is_true
-                elif 'retail' in col_lower:
-                    results['Retail'] = is_true
-
-        is_ws  = results.get('Wholesale', False)
-        is_ret = results.get('Retail', False)
-
-        if is_ws and not is_ret:
-            return 'Wholesale'
-        if is_ret and not is_ws:
-            return 'Retail'
-        return ''  # both or neither
-
-    # Legacy fallback: check Wholesale/Retail columns directly
-    wholesale_val = str(get_col(row, ['Wholesale', 'Wholesale?'], '')).strip().upper()
-    retail_val    = str(get_col(row, ['Retail', 'Retail?'], '')).strip().upper()
-    is_ws  = wholesale_val in truthy_values
-    is_ret = retail_val in truthy_values
-    if is_ws and not is_ret:
-        return 'Wholesale'
-    if is_ret and not is_ws:
-        return 'Retail'
-    return ''
