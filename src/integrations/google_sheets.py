@@ -14,7 +14,7 @@ from src.session import session
 from typing import Optional, Dict, List, Any
 import pandas as pd
 from datetime import datetime
-
+from src.utils.sheet_helpers import detect_header_row
 # Google auth imports — graceful degradation when library not installed
 try:
     from google.auth.transport.requests import Request
