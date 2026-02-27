@@ -238,7 +238,7 @@ def match():
     Accepts either uploaded CSV file or previously pulled CSV from session.
     """
     try:
-        tab_name = request.form.get('tab') or session.get_mis_current_sheet()
+        tab_name = request.form.get('tab')
         csv_file = request.files.get('csv')
 
         if not tab_name:
@@ -286,8 +286,17 @@ def match():
             )
             all_matches.extend(section_matches)
 
-        print(f"[MATCHER] Total matches: {len(all_matches)}")
-        return jsonify({'success': True, 'matches': all_matches, 'total': len(all_matches)})
+        # Group by section — frontend displayMatchResults expects {weekly:[], monthly:[], sale:[]}
+        grouped: dict = {'weekly': [], 'monthly': [], 'sale': []}
+        for m in all_matches:
+            sec = m.get('section', 'weekly')
+            grouped.setdefault(sec, []).append(m)
+
+        print(f"[MATCHER] Total matches: {len(all_matches)} "
+              f"(weekly={len(grouped['weekly'])}, "
+              f"monthly={len(grouped['monthly'])}, "
+              f"sale={len(grouped['sale'])})")
+        return jsonify({'success': True, 'matches': grouped, 'total': len(all_matches)})
 
     except Exception as e:
         traceback.print_exc()
