@@ -87,23 +87,735 @@ def load_credentials() -> dict:
 
 def inject_mis_validation(driver, expected_data=None) -> None:
     """
-    Inject MIS validation JS banner into browser.
-    Monolith: line 28253. Stub — full extraction is a future step.
-    ValidationEngine handles the Python-side logic; this injects the UI banner.
+    v12.11 - Comprehensive Banner: Inject MIS validation JavaScript.
+
+    Phase 1 (CRITICAL - RED):
+    - Rebate Type must not be "- Select -"
+    - Weekday must have at least one day selected
+    - Blocks Save button until fixed
+
+    Phase 2 (ADVISORY - ORANGE):
+    - Compares all fields to expected_data (Google Sheet)
+    - Shows ORANGE boxes for mismatches
+    - Does NOT block Save button
+
+    V2 Architecture: Persistent validator with message-passing.
+    Supports 3 modes: manual, automation, lookup.
+    Monolith: line 28253.
+
+    Args:
+        driver: Selenium WebDriver instance
+        expected_data: Dict of expected values from Google Sheet
+            {
+                'brand': str,
+                'linked_brand': str,
+                'categories': str,  # Comma-separated
+                'weekday': str,
+                'discount': str/float,
+                'vendor_contrib': str/float,
+                'locations': str,
+                'rebate_type': str,
+                'after_wholesale': bool
+            }
     """
+    import json
+    expected_json = json.dumps(expected_data) if expected_data else 'null'
+
+    # V2 ARCHITECTURE: Check if validator already active, just send message instead of re-injecting
     try:
-        if driver is None:
+        is_active = driver.execute_script("return window.VALIDATOR_V2_ACTIVE === true;")
+        if is_active and expected_data is not None:
+            print("[V2] ✅ Validator already active, sending message instead of re-injecting")
+            message = {
+                'action': 'automation' if expected_data else 'manual',
+                'expected_data': expected_data
+            }
+            message_json = json.dumps(message)
+            driver.execute_script(f"""
+                if (window.receiveValidationMessage) {{
+                    window.receiveValidationMessage({message_json});
+                }} else {{
+                    console.error('[V2] ERROR: receiveValidationMessage not found!');
+                }}
+            """)
             return
-        # Minimal banner injection — shows validation state in browser
-        js = """
-        (function() {
-            var existing = document.getElementById('mis-validation-banner');
-            if (existing) existing.remove();
-        })();
-        """
-        driver.execute_script(js)
     except Exception as e:
-        print(f"[WARN] inject_mis_validation: {e}")
+        print(f"[V2] Could not check validator status: {e}")
+
+    validation_js = f"""
+    (function() {{
+        if (window.VALIDATOR_V2_ACTIVE) {{
+            console.log('[V2] Validator already active, updating data only');
+            if (window.receiveValidationMessage) {{
+                window.receiveValidationMessage({{
+                    action: {expected_json} ? 'automation' : 'manual',
+                    expected_data: {expected_json}
+                }});
+            }}
+            return;
+        }}
+        window.VALIDATOR_V2_ACTIVE = true;
+
+        console.log('[MIS-VALIDATION] v12.12.6 (V2) - Persistent Validator Starting...');
+        console.log('[V2] Message-passing architecture active');
+        console.log('[V2] Supports 3 modes: manual, automation, lookup');
+
+        window.receiveValidationMessage = function(message) {{
+            console.log('[V2] 📨 Received message:', message);
+            if (message.action === 'manual') {{
+                VALIDATION_MODE = 'manual';
+                EXPECTED_DATA = null;
+            }} else if (message.action === 'automation') {{
+                VALIDATION_MODE = 'automation';
+                EXPECTED_DATA = message.expected_data;
+            }}
+            if (validationState.summaryBanner) {{
+                validationState.summaryBanner.remove();
+                validationState.summaryBanner = null;
+            }}
+            validationState.fieldWarnings = {{}};
+        }};
+
+        window.MIS_VALIDATOR_ACTIVE = true;
+
+        const CONFIG = {{
+            checkInterval: 500,
+            modalSelector: '.modal-content',
+            saveButtonSelector: '.btn-submit',
+            brandId: 'brand_id',
+            brandContainerId: 'select2-brand_id-container',
+            linkedBrandId: 'linked_brand_id',
+            linkedBrandContainerId: 'select2-linked_brand_id-container',
+            weekdayId: 'weekday_ids',
+            categoryId: 'category_ids',
+            storeId: 'store_ids',
+            discountId: 'discount_rate',
+            rebateTypeId: 'daily_discount_type_id',
+            rebateTypeContainerId: 'select2-daily_discount_type_id-container',
+            vendorContribId: 'rebate_percent',
+            afterWholesaleId: 'rebate_wholesale_discount',
+            startDateId: 'date_start',
+            endDateId: 'date_end'
+        }};
+
+        let EXPECTED_DATA = {expected_json};
+        let VALIDATION_MODE = EXPECTED_DATA ? 'automation' : 'manual';
+
+        let validationState = {{
+            modalOpen: false,
+            rebateTypeValid: false,
+            weekdayValid: false,
+            fieldWarnings: {{}},
+            criticalErrors: {{}},
+            saveButtonHidden: false,
+            originalSaveButton: null,
+            errorBox: null,
+            forceButton: null,
+            compareButton: null,
+            summaryBanner: null,
+            saveButtonListener: null,
+            cancelButtonListener: null
+        }};
+
+        function log(message, level) {{
+            level = level || 'INFO';
+            console.log(`[MIS-VALIDATION] [${{level}}] ${{message}}`);
+        }}
+
+        function isModalOpen() {{
+            const modal = document.querySelector(CONFIG.modalSelector);
+            if (!modal) return false;
+            const modalTitle = modal.querySelector('.modal-title');
+            if (!modalTitle) return false;
+            const titleText = modalTitle.textContent || '';
+            return titleText.includes('Daily Discount') || titleText.includes('Discount');
+        }}
+
+        function attachSaveButtonListener() {{
+            const saveBtn = document.querySelector(CONFIG.saveButtonSelector);
+            if (!saveBtn || validationState.saveButtonListener) return;
+            validationState.saveButtonListener = function() {{ handleSaveClick(); }};
+            saveBtn.addEventListener('click', validationState.saveButtonListener);
+        }}
+
+        function attachCancelButtonListener() {{
+            const modal = document.querySelector(CONFIG.modalSelector);
+            if (!modal || validationState.cancelButtonListener) return;
+            const dismissButtons = modal.querySelectorAll('[data-dismiss="modal"]');
+            const closeButtons = modal.querySelectorAll('.btn-modal-close, .close');
+            const allCancelButtons = new Set([...dismissButtons, ...closeButtons]);
+            if (allCancelButtons.size === 0) return;
+            validationState.cancelButtonListener = function() {{ handleCancelClick(); }};
+            allCancelButtons.forEach(btn => {{
+                if (btn.dataset.cancelListenerAttached) return;
+                btn.addEventListener('click', validationState.cancelButtonListener);
+                btn.dataset.cancelListenerAttached = 'true';
+            }});
+        }}
+
+        function handleSaveClick() {{
+            removeSummaryBanner();
+            removeForceButton();
+        }}
+
+        function handleCancelClick() {{
+            EXPECTED_DATA = null;
+            VALIDATION_MODE = 'manual';
+            validationState.fieldWarnings = {{}};
+            validationState.criticalErrors = {{}};
+            validationState.rebateTypeValid = false;
+            validationState.weekdayValid = false;
+            removeAllRedBoxes();
+            removeAllOrangeBoxes();
+            removeSummaryBanner();
+        }}
+
+        function getRebateTypeValue() {{
+            const c = document.getElementById(CONFIG.rebateTypeContainerId);
+            return c ? c.getAttribute('title') : null;
+        }}
+        function getBrandValue() {{
+            const c = document.getElementById(CONFIG.brandContainerId);
+            return c ? c.getAttribute('title') : null;
+        }}
+        function getLinkedBrandValue() {{
+            const c = document.getElementById(CONFIG.linkedBrandContainerId);
+            return c ? c.getAttribute('title') : null;
+        }}
+        function getMultiSelectValues(fieldId) {{
+            const select = document.getElementById(fieldId);
+            if (!select) return [];
+            const selected = [];
+            for (let i = 0; i < select.options.length; i++) {{
+                if (select.options[i].selected) selected.push(select.options[i].text.trim());
+            }}
+            return selected;
+        }}
+        function getWeekdayValues() {{ return getMultiSelectValues(CONFIG.weekdayId); }}
+        function getCategoryValues() {{ return getMultiSelectValues(CONFIG.categoryId); }}
+        function getStoreValues() {{ return getMultiSelectValues(CONFIG.storeId); }}
+        function getDiscountValue() {{
+            const i = document.getElementById(CONFIG.discountId);
+            return i ? i.value.trim() : null;
+        }}
+        function getVendorContribValue() {{
+            const i = document.getElementById(CONFIG.vendorContribId);
+            return i ? i.value.trim() : null;
+        }}
+        function getAfterWholesaleValue() {{
+            const cb = document.getElementById(CONFIG.afterWholesaleId);
+            return cb ? cb.checked : false;
+        }}
+        function getStartDateValue() {{
+            const i = document.getElementById(CONFIG.startDateId);
+            return i ? i.value.trim() : null;
+        }}
+        function getEndDateValue() {{
+            const i = document.getElementById(CONFIG.endDateId);
+            return i ? i.value.trim() : null;
+        }}
+        function getWeekdayFromDate(dateStr) {{
+            if (!dateStr) return null;
+            let parts = dateStr.includes('/') ? dateStr.split('/') : dateStr.split('-').reverse();
+            if (parts.length < 3) return null;
+            let [m, d, y] = parts;
+            if (dateStr.includes('-')) [y, m, d] = dateStr.split('-');
+            let year = parseInt(y, 10);
+            if (year < 100) year += 2000;
+            const date = new Date(year, parseInt(m, 10) - 1, parseInt(d, 10));
+            return ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][date.getDay()];
+        }}
+
+        function isRebateTypeValid() {{
+            const v = getRebateTypeValue();
+            return v && v !== '- Select -';
+        }}
+        function isWeekdayValid() {{
+            return getWeekdayValues().length > 0;
+        }}
+
+        function validateAllFields() {{
+            if (!EXPECTED_DATA || VALIDATION_MODE === 'manual') return {{}};
+            const warnings = {{}};
+
+            // Brand
+            if (EXPECTED_DATA.brand) {{
+                const actual = getBrandValue();
+                if (actual && actual !== '- Select -' && actual !== EXPECTED_DATA.brand)
+                    warnings.brand = {{ expected: EXPECTED_DATA.brand, actual, message: `Brand mismatch: Expected "${{EXPECTED_DATA.brand}}", found "${{actual}}"` }};
+            }}
+            // Linked Brand
+            if (EXPECTED_DATA.linked_brand) {{
+                const actual = getLinkedBrandValue();
+                if (actual && actual !== '- Select -' && actual !== EXPECTED_DATA.linked_brand)
+                    warnings.linked_brand = {{ expected: EXPECTED_DATA.linked_brand, actual, message: `Linked Brand mismatch: Expected "${{EXPECTED_DATA.linked_brand}}", found "${{actual}}"` }};
+            }}
+            // Rebate Type (advisory)
+            if (EXPECTED_DATA.rebate_type) {{
+                const sel = document.getElementById('daily_discount_type_id');
+                if (sel && sel.value) {{
+                    const actual = sel.options[sel.selectedIndex]?.text || sel.value;
+                    if (actual && actual !== EXPECTED_DATA.rebate_type)
+                        warnings.rebate_type = {{ expected: EXPECTED_DATA.rebate_type, actual, message: `Rebate Type: Expected "${{EXPECTED_DATA.rebate_type}}", found "${{actual}}"` }};
+                }}
+            }}
+            // Weekday
+            if (EXPECTED_DATA.weekday) {{
+                const actual = getWeekdayValues();
+                const expected = EXPECTED_DATA.weekday.split(',').map(d => d.trim()).filter(d => d);
+                const actualLower = actual.map(d => d.toLowerCase());
+                const expectedLower = expected.map(d => d.toLowerCase());
+                const extra = actual.filter(d => !expectedLower.includes(d.toLowerCase()));
+                const missing = expected.filter(d => !actualLower.includes(d.toLowerCase()));
+                if (extra.length > 0 || missing.length > 0) {{
+                    let msg = `Weekday: Expected "${{expected.join(', ')}}", found "${{actual.join(', ')}}"`;
+                    const notes = [];
+                    if (extra.length) notes.push('Extra: ' + extra.join(', '));
+                    if (missing.length) notes.push('Missing: ' + missing.join(', '));
+                    if (notes.length) msg += ' (' + notes.join(', ') + ')';
+                    warnings.weekday = {{ expected: expected.join(', '), actual: actual.join(', '), message: msg }};
+                }}
+            }}
+            // Categories
+            if (EXPECTED_DATA.categories) {{
+                const actual = getCategoryValues();
+                const expectedText = EXPECTED_DATA.categories.trim();
+                const expectedLower = expectedText.toLowerCase();
+                if (expectedLower === 'all categories' || expectedLower === 'all') {{
+                    if (actual.length > 0)
+                        warnings.categories = {{ expected: 'All Categories (blank)', actual: actual.join(', '), message: `Category mismatch: Expected "All Categories" (blank), found "${{actual.join(', ')}}"` }};
+                }} else if (!expectedText.toLowerCase().includes('except')) {{
+                    const expected = expectedText.split(',').map(s => s.trim());
+                    const missing = expected.filter(e => !actual.map(a => a.toLowerCase()).includes(e.toLowerCase()));
+                    const extra = actual.filter(a => !expected.map(e => e.toLowerCase()).includes(a.toLowerCase()));
+                    if (missing.length > 0 || extra.length > 0)
+                        warnings.categories = {{ expected: expected.join(', '), actual: actual.join(', ') || '(blank)', message: `Category mismatch: Expected "${{expected.join(', ')}}", found "${{actual.join(', ') || '(blank)'}}"` }};
+                }}
+            }}
+            // Discount
+            if (EXPECTED_DATA.discount != null) {{
+                const actual = getDiscountValue();
+                const expectedNum = parseFloat(String(EXPECTED_DATA.discount).replace('%','').trim());
+                const actualNum = parseFloat((actual || '').replace('%','').trim());
+                if (!isNaN(expectedNum) && !isNaN(actualNum) && expectedNum !== actualNum)
+                    warnings.discount = {{ expected: expectedNum + '%', actual: actualNum + '%', message: `Discount mismatch: Expected "${{expectedNum}}%", found "${{actualNum}}%"` }};
+            }}
+            // Vendor Contribution
+            if (EXPECTED_DATA.vendor_contrib != null) {{
+                const actual = getVendorContribValue();
+                const expectedNum = parseFloat(String(EXPECTED_DATA.vendor_contrib).replace('%','').trim());
+                const actualNum = parseFloat((actual || '').replace('%','').trim());
+                if (!isNaN(expectedNum) && !isNaN(actualNum) && expectedNum !== actualNum)
+                    warnings.vendor_contrib = {{ expected: expectedNum + '%', actual: actualNum + '%', message: `Vendor Contribution mismatch: Expected "${{expectedNum}}%", found "${{actualNum}}%"` }};
+            }}
+            // After Wholesale
+            if (EXPECTED_DATA.after_wholesale != null) {{
+                const actual = getAfterWholesaleValue();
+                if (actual !== EXPECTED_DATA.after_wholesale)
+                    warnings.after_wholesale = {{ expected: EXPECTED_DATA.after_wholesale ? 'ON' : 'OFF', actual: actual ? 'ON' : 'OFF', message: `After Wholesale: Expected "${{EXPECTED_DATA.after_wholesale ? 'ON' : 'OFF'}}", found "${{actual ? 'ON' : 'OFF'}}"` }};
+            }}
+            // Stores
+            if (EXPECTED_DATA.locations !== undefined) {{
+                const actual = getStoreValues();
+                const expectedText = (EXPECTED_DATA.locations || '').trim();
+                const expectedLower = expectedText.toLowerCase();
+                const STORE_MAP = {{
+                    'beverly hills':'beverly','beverly':'beverly','davis':'davis','dixon':'dixon',
+                    'el sobrante':'el sobrante','fresno (palm)':'fresno','fresno':'fresno',
+                    'fresno shaw':'fresno shaw','fresno (shaw)':'fresno shaw','hawthorne':'hawthorne',
+                    'koreatown':'koreatown','laguna woods':'laguna woods','oxnard':'oxnard',
+                    'riverside':'riverside','west hollywood':'west hollywood'
+                }};
+                const MASTER_STORES = ['Beverly','Davis','Dixon','El Sobrante','Fresno','Fresno Shaw','Hawthorne','Koreatown','Laguna Woods','Oxnard','Riverside','West Hollywood'];
+                function normStore(name) {{
+                    const stripped = name.toLowerCase().trim().replace(/the artist tree|davisville business enterprises[^-]*|club 420/i, '').replace(/^[ \t]*-[ \t]*/, '').trim(); return STORE_MAP[stripped] || stripped;
+                }}
+                if (expectedLower === 'all locations' || expectedLower === 'all' || expectedLower === '') {{
+                    if (actual.length !== 0 && actual.length !== MASTER_STORES.length)
+                        warnings.stores = {{ expected: 'All Locations (blank or all 12)', actual: actual.join(', ') || '(blank)', message: `Store mismatch: Expected "All Locations", found ${{actual.length}} stores: "${{actual.join(', ')}}"` }};
+                }} else if (expectedLower.includes('except')) {{
+                    const exceptMatch = expectedText.match(/except[\\s:]*(.+)/i);
+                    if (exceptMatch) {{
+                        let raw = exceptMatch[1].trim();
+                        if (raw.endsWith(')') && !raw.match(/\\([^)]+\\)$/)) raw = raw.slice(0, -1).trim();
+                        const masterNorm = MASTER_STORES.map(s => normStore(s));
+                        const excNorm = raw.split(',').map(s => normStore(s.trim())).filter(e => masterNorm.includes(e));
+                        const expectedStores = MASTER_STORES.filter(s => !excNorm.includes(normStore(s)));
+                        const actualNorm = actual.map(s => s.toLowerCase());
+                        const missing = expectedStores.filter(s => !actualNorm.includes(s.toLowerCase()));
+                        const extra = actual.filter(s => !expectedStores.map(e => e.toLowerCase()).includes(s.toLowerCase()));
+                        if (missing.length > 0 || extra.length > 0) {{
+                            let msg = 'Store mismatch:';
+                            if (missing.length) msg += ` Missing: ${{missing.join(', ')}}.`;
+                            if (extra.length) msg += ` Extra: ${{extra.join(', ')}}.`;
+                            warnings.stores = {{ expected: expectedStores.join(', '), actual: actual.join(', ') || '(blank)', message: msg }};
+                        }}
+                    }}
+                }} else {{
+                    const expectedStores = expectedText.split(',').map(s => s.trim()).filter(s => s);
+                    const expectedNorm = expectedStores.map(s => normStore(s));
+                    const actualNorm = actual.map(s => s.toLowerCase());
+                    const missing = expectedStores.filter((s, i) => !actualNorm.includes(expectedNorm[i]));
+                    const extra = actual.filter(s => !expectedNorm.includes(s.toLowerCase()));
+                    if (missing.length > 0 || extra.length > 0) {{
+                        let msg = 'Store mismatch:';
+                        if (missing.length) msg += ` Missing: ${{missing.join(', ')}}.`;
+                        if (extra.length) msg += ` Extra: ${{extra.join(', ')}}.`;
+                        warnings.stores = {{ expected: expectedStores.join(', '), actual: actual.join(', ') || '(blank)', message: msg }};
+                    }}
+                }}
+            }}
+            // Monthly date validation
+            const sectionType = EXPECTED_DATA.section_type || 'weekly';
+            const allExpectedEntries = EXPECTED_DATA.all_expected_entries || [];
+            if (sectionType === 'monthly' && allExpectedEntries.length > 0) {{
+                const startDate = getStartDateValue();
+                const endDate = getEndDateValue();
+                const selectedWeekdays = getWeekdayValues();
+                if (startDate && endDate && startDate !== endDate)
+                    warnings.date_range = {{ expected: 'Same date', actual: `${{startDate}} to ${{endDate}}`, message: `Monthly deals should have same start/end date. Found: ${{startDate}} - ${{endDate}}` }};
+                if (startDate && selectedWeekdays.length > 0) {{
+                    const calc = getWeekdayFromDate(startDate);
+                    if (calc && selectedWeekdays[0].toLowerCase() !== calc.toLowerCase())
+                        warnings.weekday_date_mismatch = {{ expected: calc, actual: selectedWeekdays[0], message: `Weekday/Date mismatch: ${{startDate}} is a ${{calc}}, but "${{selectedWeekdays[0]}}" is selected` }};
+                }}
+                if (startDate) {{
+                    const startDay = parseInt(startDate.split('/')[1], 10);
+                    const others = allExpectedEntries.filter(e => e.day !== startDay);
+                    if (others.length > 0) warnings._otherEntriesExpected = others;
+                }}
+            }}
+            // Sale date validation
+            if (sectionType === 'sale' && allExpectedEntries.length > 0) {{
+                const startDate = getStartDateValue();
+                const endDate = getEndDateValue();
+                const selectedWeekdays = getWeekdayValues();
+                const uncovered = allExpectedEntries.filter(entry => {{
+                    const inRange = startDate && endDate && entry.date >= startDate && entry.date <= endDate;
+                    const wdSelected = selectedWeekdays.some(w => w.toLowerCase() === entry.weekday.toLowerCase());
+                    return !(inRange && wdSelected);
+                }});
+                if (uncovered.length > 0) warnings._otherEntriesExpected = uncovered;
+                if (endDate && allExpectedEntries.length > 0) {{
+                    const lastDate = allExpectedEntries[allExpectedEntries.length - 1].date;
+                    if (endDate > lastDate)
+                        warnings.end_date_extended = {{ expected: lastDate, actual: endDate, message: `End date (${{endDate}}) extends beyond last sale date (${{lastDate}})` }};
+                }}
+            }}
+            return warnings;
+        }}
+
+        // RED box helpers
+        function addRedBox(fieldId) {{
+            const field = document.getElementById(fieldId);
+            if (!field) return;
+            const container = field.nextElementSibling;
+            if (container && container.classList.contains('select2')) {{
+                container.style.border = '3px solid #dc3545';
+                container.style.boxShadow = '0 0 10px rgba(220,53,69,0.5)';
+            }} else if (field) {{
+                field.style.border = '3px solid #dc3545';
+            }}
+        }}
+        function removeRedBox(fieldId) {{
+            const field = document.getElementById(fieldId);
+            if (!field) return;
+            const container = field.nextElementSibling;
+            if (container && container.classList.contains('select2')) {{
+                container.style.border = '';
+                container.style.boxShadow = '';
+            }} else if (field) {{
+                field.style.border = '';
+            }}
+        }}
+        function removeAllRedBoxes() {{
+            removeRedBox(CONFIG.rebateTypeId);
+            removeRedBox(CONFIG.weekdayId);
+        }}
+
+        // ORANGE box helpers
+        function addOrangeBox(fieldId, isSelect2, tooltip) {{
+            const field = document.getElementById(fieldId);
+            if (!field) return;
+            const style = '3px solid #ff9800';
+            const shadow = '0 0 10px rgba(255,152,0,0.5)';
+            if (isSelect2) {{
+                const c = field.nextElementSibling;
+                if (c && c.classList.contains('select2')) {{
+                    c.style.border = style; c.style.boxShadow = shadow;
+                    if (tooltip) c.setAttribute('title', tooltip);
+                }}
+            }} else if (fieldId === CONFIG.afterWholesaleId) {{
+                const row = field.closest('.input-row');
+                if (row) {{ row.style.border = style; row.style.boxShadow = shadow; }}
+            }} else {{
+                field.style.border = style; field.style.boxShadow = shadow;
+                if (tooltip) field.setAttribute('title', tooltip);
+            }}
+        }}
+        function removeOrangeBox(fieldId, isSelect2) {{
+            const field = document.getElementById(fieldId);
+            if (!field) return;
+            if (isSelect2) {{
+                const c = field.nextElementSibling;
+                if (c && c.classList.contains('select2')) {{ c.style.border = ''; c.style.boxShadow = ''; c.removeAttribute('title'); }}
+            }} else if (fieldId === CONFIG.afterWholesaleId) {{
+                const row = field.closest('.input-row');
+                if (row) {{ row.style.border = ''; row.style.boxShadow = ''; }}
+            }} else {{
+                field.style.border = ''; field.style.boxShadow = ''; field.removeAttribute('title');
+            }}
+        }}
+        function removeAllOrangeBoxes() {{
+            [CONFIG.brandId, CONFIG.linkedBrandId, CONFIG.weekdayId, CONFIG.categoryId, CONFIG.storeId].forEach(id => removeOrangeBox(id, true));
+            [CONFIG.discountId, CONFIG.vendorContribId, CONFIG.afterWholesaleId].forEach(id => removeOrangeBox(id, false));
+        }}
+        function updateFieldWarnings(warnings) {{
+            removeAllOrangeBoxes();
+            if (warnings.brand) addOrangeBox(CONFIG.brandId, true, `⚠️ ${{warnings.brand.message}}`);
+            if (warnings.linked_brand) addOrangeBox(CONFIG.linkedBrandId, true, `⚠️ ${{warnings.linked_brand.message}}`);
+            if (warnings.weekday) addOrangeBox(CONFIG.weekdayId, true, `⚠️ ${{warnings.weekday.message}}`);
+            if (warnings.categories) addOrangeBox(CONFIG.categoryId, true, `⚠️ ${{warnings.categories.message}}`);
+            if (warnings.stores) addOrangeBox(CONFIG.storeId, true, `⚠️ ${{warnings.stores.message}}`);
+            if (warnings.discount) addOrangeBox(CONFIG.discountId, false, `⚠️ ${{warnings.discount.message}}`);
+            if (warnings.vendor_contrib) addOrangeBox(CONFIG.vendorContribId, false, `⚠️ ${{warnings.vendor_contrib.message}}`);
+            if (warnings.after_wholesale) addOrangeBox(CONFIG.afterWholesaleId, false, `⚠️ ${{warnings.after_wholesale.message}}`);
+        }}
+
+        // Save button control
+        function hideSaveButton() {{
+            if (validationState.saveButtonHidden) return;
+            const saveBtn = document.querySelector(CONFIG.saveButtonSelector);
+            if (!saveBtn) return;
+            validationState.originalSaveButton = saveBtn;
+            saveBtn.style.display = 'none';
+            const errorBox = document.createElement('div');
+            errorBox.id = 'mis-validation-error-box';
+            errorBox.style.cssText = 'background:#dc3545;color:white;padding:10px 15px;border-radius:4px;margin-bottom:10px;font-weight:bold;text-align:center;';
+            errorBox.innerHTML = '❌ CRITICAL ERROR - Cannot Save<br><small style="font-weight:normal;">⚠️ Rebate Type must be selected AND Weekday must be set</small>';
+            saveBtn.parentNode.insertBefore(errorBox, saveBtn);
+            validationState.errorBox = errorBox;
+            validationState.saveButtonHidden = true;
+        }}
+        function showSaveButton() {{
+            if (!validationState.saveButtonHidden) return;
+            if (validationState.errorBox) {{ validationState.errorBox.remove(); validationState.errorBox = null; }}
+            if (validationState.originalSaveButton) validationState.originalSaveButton.style.display = '';
+            validationState.saveButtonHidden = false;
+        }}
+
+        function createForceButton() {{
+            if (validationState.forceButton) return;
+            const btn = document.createElement('button');
+            btn.id = 'force-show-save-btn';
+            btn.textContent = 'Force Show Save';
+            btn.style.cssText = 'position:fixed;top:10px;left:10px;z-index:99999;background:#ffc107;color:#000;border:2px solid #ff9800;padding:8px 12px;border-radius:4px;font-weight:bold;cursor:pointer;';
+            btn.onclick = function() {{ showSaveButton(); }};
+            document.body.appendChild(btn);
+            validationState.forceButton = btn;
+        }}
+        function removeForceButton() {{
+            if (validationState.forceButton) {{ validationState.forceButton.remove(); validationState.forceButton = null; }}
+        }}
+
+        // Compare to Google Sheet button
+        let listeningMode = false, notFoundMode = false, datatableClickHandler = null;
+        const FLASK_BACKEND = 'http://127.0.0.1:5000';
+
+        function createCompareButton() {{
+            if (validationState.compareButton) return;
+            const btn = document.createElement('button');
+            btn.id = 'compare-to-sheet-btn';
+            btn.textContent = 'Compare to Google Sheet';
+            btn.style.cssText = 'position:fixed;top:10px;left:160px;z-index:99999;background:#17a2b8;color:#fff;border:2px solid #138496;padding:8px 12px;border-radius:4px;font-weight:bold;cursor:pointer;';
+            btn.onclick = function() {{ listeningMode ? exitListeningMode(btn) : enterListeningMode(btn); }};
+            document.body.appendChild(btn);
+            validationState.compareButton = btn;
+        }}
+        function enterListeningMode(btn) {{
+            listeningMode = true; notFoundMode = false;
+            btn.textContent = '👆 Click a Row...';
+            btn.style.background = '#ffc107'; btn.style.color = '#000';
+            attachDatatableListener();
+        }}
+        function exitListeningMode(btn) {{
+            listeningMode = false;
+            if (!notFoundMode) {{
+                btn.textContent = 'Compare to Google Sheet';
+                btn.style.background = '#17a2b8'; btn.style.color = '#fff';
+            }}
+            removeDatatableListener();
+        }}
+        function attachDatatableListener() {{
+            const dt = document.querySelector('#daily-discount-table, .dataTable, table.table, #DataTables_Table_0');
+            if (!dt) return;
+            datatableClickHandler = async function(event) {{
+                const target = event.target;
+                const row = target.closest('tr');
+                if (!row) return;
+                let misId = null;
+                for (const el of [target, ...row.querySelectorAll('td,a,span')]) {{
+                    const m = el.textContent.trim().match(/^(\\d{{3,7}})$/);
+                    if (m) {{ misId = m[1]; break; }}
+                }}
+                if (!misId && row.dataset.id) misId = row.dataset.id;
+                if (misId) {{ await compareToGoogleSheet(misId); exitListeningMode(validationState.compareButton); }}
+            }};
+            dt.addEventListener('click', datatableClickHandler);
+        }}
+        function removeDatatableListener() {{
+            if (datatableClickHandler) {{
+                const dt = document.querySelector('#daily-discount-table, .dataTable, table.table');
+                if (dt) dt.removeEventListener('click', datatableClickHandler);
+                datatableClickHandler = null;
+            }}
+        }}
+        async function compareToGoogleSheet(misId) {{
+            const btn = validationState.compareButton;
+            if (btn) {{ btn.textContent = 'Searching...'; btn.disabled = true; }}
+            try {{
+                const response = await fetch(`${{FLASK_BACKEND}}/api/mis/compare-to-sheet`, {{
+                    method: 'POST', headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{mis_id: misId}})
+                }});
+                const result = await response.json();
+                if (result.success && result.mode === 'automation' && result.expected_data) {{
+                    VALIDATION_MODE = 'automation';
+                    EXPECTED_DATA = result.expected_data;
+                    validationState.fieldWarnings = {{}};
+                    if (validationState.summaryBanner) {{ validationState.summaryBanner.remove(); validationState.summaryBanner = null; }}
+                    notFoundMode = false;
+                    setTimeout(() => {{ if (typeof runValidation === 'function') runValidation(); }}, 800);
+                }} else {{
+                    VALIDATION_MODE = 'manual'; EXPECTED_DATA = null; notFoundMode = true;
+                    if (btn) {{
+                        btn.textContent = '❌ Not Found - Manual Mode';
+                        btn.style.background = '#dc3545'; btn.style.color = '#000';
+                        setTimeout(() => {{
+                            if (btn && btn.textContent.includes('Not Found')) {{
+                                btn.textContent = 'Compare to Google Sheet';
+                                btn.style.background = '#17a2b8'; btn.style.color = '#fff';
+                                notFoundMode = false;
+                            }}
+                        }}, 5000);
+                    }}
+                }}
+            }} catch (e) {{
+                alert('Failed to connect to backend.');
+            }} finally {{
+                if (btn) btn.disabled = false;
+            }}
+        }}
+        function removeCompareButton() {{
+            if (validationState.compareButton) {{ validationState.compareButton.remove(); validationState.compareButton = null; }}
+        }}
+
+        // Summary banner
+        function createSummaryBanner(warnings, criticalErrors) {{
+            if (validationState.summaryBanner) {{ validationState.summaryBanner.remove(); validationState.summaryBanner = null; }}
+            const otherEntries = warnings ? warnings._otherEntriesExpected : null;
+            const displayWarnings = Object.fromEntries(Object.entries(warnings || {{}}).filter(([k]) => k !== '_otherEntriesExpected'));
+            const criticalCount = Object.keys(criticalErrors || {{}}).length;
+            const warningCount = Object.keys(displayWarnings).length;
+            const total = criticalCount + warningCount;
+            const banner = document.createElement('div');
+            banner.id = 'mis-validation-summary';
+            let bgColor = total === 0 ? '#28a745' : (criticalCount > 0 ? '#dc3545' : '#ff9800');
+            banner.style.cssText = `background:${{bgColor}};color:white;padding:12px 15px;margin-bottom:15px;border-radius:4px;font-weight:bold;`;
+            if (total === 0) {{
+                banner.innerHTML = `✅ ${{VALIDATION_MODE === 'automation' ? 'All Fields Correct - Ready to Save!' : 'Critical Fields Filled - Ready to Save!'}}`;
+            }} else {{
+                const plural = total > 1 ? 's' : '';
+                const header = criticalCount > 0 ? `❌ ${{total}} Issue${{plural}} Found (${{criticalCount}} blocking save)` : `⚠️ ${{total}} Field${{plural}} May Need Review`;
+                banner.innerHTML = `<div style="text-align:center;">${{header}}</div><div style="font-weight:normal;text-align:center;font-size:0.85em;">See Deal Entry Checklist for details 👇</div>`;
+            }}
+            if (otherEntries && otherEntries.length > 0) {{
+                const extra = document.createElement('div');
+                extra.style.cssText = 'border:2px solid rgba(255,255,255,0.6);border-radius:6px;padding:8px;margin-top:8px;font-size:0.85em;';
+                extra.innerHTML = `ℹ️ ${{otherEntries.length}} more MIS ${{otherEntries.length === 1 ? 'entry' : 'entries'}} needed`;
+                banner.appendChild(extra);
+            }}
+            const modalBody = document.querySelector('.modal-body');
+            if (modalBody) {{ modalBody.insertBefore(banner, modalBody.firstChild); validationState.summaryBanner = banner; }}
+        }}
+        function removeSummaryBanner() {{
+            if (validationState.summaryBanner) {{ validationState.summaryBanner.remove(); validationState.summaryBanner = null; }}
+        }}
+
+        // Main validation loop
+        function runValidation() {{
+            const modalOpen = isModalOpen();
+            if (modalOpen !== validationState.modalOpen) {{
+                validationState.modalOpen = modalOpen;
+                if (modalOpen) {{
+                    createForceButton(); createCompareButton();
+                    attachSaveButtonListener(); attachCancelButtonListener();
+                }} else {{
+                    removeForceButton(); removeCompareButton(); removeSummaryBanner();
+                    validationState.saveButtonHidden = false;
+                    validationState.rebateTypeValid = false;
+                    validationState.weekdayValid = false;
+                    validationState.fieldWarnings = {{}};
+                }}
+            }}
+            if (!modalOpen) return;
+
+            const rebateValid = isRebateTypeValid();
+            const weekdayValid = isWeekdayValid();
+            const rebateChanged = rebateValid !== validationState.rebateTypeValid;
+            const weekdayChanged = weekdayValid !== validationState.weekdayValid;
+
+            if (rebateChanged) {{
+                validationState.rebateTypeValid = rebateValid;
+                rebateValid ? removeRedBox(CONFIG.rebateTypeId) : addRedBox(CONFIG.rebateTypeId);
+            }}
+            if (weekdayChanged) {{
+                validationState.weekdayValid = weekdayValid;
+                weekdayValid ? removeRedBox(CONFIG.weekdayId) : addRedBox(CONFIG.weekdayId);
+            }}
+            if (rebateChanged || weekdayChanged) {{
+                (rebateValid && weekdayValid) ? showSaveButton() : hideSaveButton();
+            }}
+
+            const criticalErrors = {{}};
+            if (!rebateValid) criticalErrors.rebateType = {{ message: 'Must be selected' }};
+            if (!weekdayValid) criticalErrors.weekday = {{ message: 'Must have at least one day' }};
+
+            const warnings = validateAllFields();
+            const warningsChanged = JSON.stringify(warnings) !== JSON.stringify(validationState.fieldWarnings);
+            const criticalChanged = JSON.stringify(criticalErrors) !== JSON.stringify(validationState.criticalErrors || {{}});
+            const bannerMissing = !validationState.summaryBanner;
+
+            if (criticalChanged || warningsChanged || bannerMissing) {{
+                validationState.fieldWarnings = warnings;
+                validationState.criticalErrors = criticalErrors;
+                updateFieldWarnings(warnings);
+                removeSummaryBanner();
+                createSummaryBanner(warnings, criticalErrors);
+            }}
+        }}
+
+        log('Starting validation monitor (500ms interval)');
+        setInterval(runValidation, CONFIG.checkInterval);
+        runValidation();
+        log('v12.11 validation system active!');
+    }})();
+    """
+
+    try:
+        print("[VALIDATION-INJECT] Starting injection...")
+        print(f"[VALIDATION-INJECT] Expected data: {expected_data is not None}")
+        print(f"[VALIDATION-INJECT] JavaScript length: {len(validation_js)} characters")
+        driver.execute_script(validation_js)
+        print("[MIS-VALIDATION] v12.11 JavaScript injected successfully")
+        print("[VALIDATION-INJECT] ✅ Injection completed successfully")
+    except Exception as e:
+        import traceback
+        print(f"[VALIDATION-INJECT] ❌ JavaScript execution FAILED!")
+        print(f"[VALIDATION-INJECT] Error type: {type(e).__name__}")
+        print(f"[VALIDATION-INJECT] Error message: {str(e)}")
+        print(f"[VALIDATION-INJECT] Full traceback:\n{traceback.format_exc()}")
+        raise
 
 class BlazeInventoryReporter:
     """

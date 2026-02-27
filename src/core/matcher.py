@@ -183,6 +183,14 @@ def enhanced_match_mis_ids(
         if col in mis_df.columns:
             id_col_name = col
             break
+    # DIAGNOSTIC — remove after confirming
+    print(f"[MATCHER-DEBUG] mis_df columns: {list(mis_df.columns[:10])}")
+    print(f"[MATCHER-DEBUG] google_df columns: {list(google_df.columns[:10])}")
+    print(f"[MATCHER-DEBUG] bmap has {len(bmap)} keys, pmap has {len(pmap)} keys")
+    if not google_df.empty:
+        first_row = google_df.iloc[0]
+        print(f"[MATCHER-DEBUG] First row brand_raw: '{get_col(first_row, ['[Brand]', 'Brand'], '', bmap, pmap)}'")
+        print(f"[MATCHER-DEBUG] First row weekday: '{get_col(first_row, ['[Weekday]', 'Weekday'], '', bmap, pmap)}'")
 
     def clean_id(row: pd.Series) -> str:
         val = row.get(id_col_name)

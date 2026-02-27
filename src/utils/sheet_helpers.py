@@ -172,26 +172,34 @@ def parse_percentage(value: Any) -> float:
         return 0.0
 
 
-def get_col(row: pd.Series, possible_names: List[str], default: Any = '') -> Any:
+def get_col(
+    row: pd.Series,
+    possible_names: List[str],
+    default: Any = '',
+    bracket_map: dict | None = None,
+    prefix_map: dict | None = None,
+) -> Any:
     """
     Flexible column accessor with bracket-header alias resolution.
 
     Resolution order for each name in possible_names:
-      1. bracket_map: '[Weekday]' → 'Weekday [Weekday]'  (from session)
+      1. bracket_map: '[Weekday]' → 'Weekday [Weekday]'
       2. Exact match in row.index
-      3. prefix_map:  'Weekday' → 'Weekday [Weekday]'   (from session)
+      3. prefix_map:  'Weekday' → 'Weekday [Weekday]'
 
-    Falls through to next name if current name doesn't resolve.
-    Monolith: line 4849 (adapted: GLOBAL_DATA → session).
+    bracket_map / prefix_map may be passed directly (by matcher.py) or will
+    be loaded from session as a fallback.
+    Monolith: line 4849 (adapted: GLOBAL_DATA → session + direct args).
     """
-    # Lazy import to avoid circular dependency at module load time
-    try:
-        from src.session import session as _session
-        bracket_map: dict = _session.get_mis_bracket_map() or {}
-        prefix_map: dict = _session.get_mis_prefix_map() or {}
-    except Exception:
-        bracket_map = {}
-        prefix_map = {}
+    if bracket_map is None or prefix_map is None:
+        # Lazy import to avoid circular dependency at module load time
+        try:
+            from src.session import session as _session
+            bracket_map = bracket_map if bracket_map is not None else (_session.get_mis_bracket_map() or {})
+            prefix_map  = prefix_map  if prefix_map  is not None else (_session.get_mis_prefix_map()  or {})
+        except Exception:
+            bracket_map = bracket_map or {}
+            prefix_map  = prefix_map  or {}
 
     for name in possible_names:
         # 1. Bracket alias
