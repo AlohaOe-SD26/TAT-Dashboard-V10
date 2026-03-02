@@ -620,7 +620,7 @@ def inject_mis_validation(driver, expected_data=None) -> None:
 
         // Compare to Google Sheet button
         let listeningMode = false, notFoundMode = false, datatableClickHandler = null;
-        const FLASK_BACKEND = 'http://127.0.0.1:5000';
+        const FLASK_BACKEND = 'http://127.0.0.1:{os.environ.get("FLASK_PORT", "5000")}';
 
         function createCompareButton() {{
             if (validationState.compareButton) return;
@@ -816,7 +816,410 @@ def inject_mis_validation(driver, expected_data=None) -> None:
         print(f"[VALIDATION-INJECT] Error message: {str(e)}")
         print(f"[VALIDATION-INJECT] Full traceback:\n{traceback.format_exc()}")
         raise
+# ─────────────────────────────────────────────────────────────────────────────
+# PATCH: insert this entire block into src/api/blaze.py
+#
+# WHERE: directly after inject_mis_validation() ends (after the final `raise`
+#        in its except block) and BEFORE `class BlazeInventoryReporter`
+#
+# The line in blaze.py immediately before the insertion point reads:
+#        raise
+#
+# The line immediately after the insertion point reads:
+#        class BlazeInventoryReporter:
+# ─────────────────────────────────────────────────────────────────────────────
 
+
+def inject_checklist_banner(driver, expected_data: dict, mode: str = 'create') -> None:
+    """
+    v12.19: Inject floating Checklist Banner into the MIS browser window.
+
+    Shows expected vs actual for all deal fields in a fixed panel (top-right,
+    position: fixed, id='checklist-banner-v18').
+    Validates in real-time every 500ms. Blocks save if Weekday or Rebate Type empty.
+
+    MODES:
+      'create'  — full checklist during new deal creation
+      'compare' — same panel, header changes to "🔍 Compare to Sheet"
+
+    Call sites (always fire BOTH, in this order):
+        inject_checklist_banner(driver, expected_data, mode='compare')
+        inject_mis_validation(driver, expected_data=expected_data)
+
+    Monolith: inject_checklist_banner() — called at v12.18 in automate-create-deal,
+    v12.19 in compare-to-sheet, v12.22.5 in lookup-mis-id.
+    """
+    import json as _json
+
+    expected_json = _json.dumps(expected_data)
+    mode_json     = _json.dumps(mode)
+
+    js_code = f"""
+    (function() {{
+        // Remove any existing checklist banner
+        const existingBanner = document.getElementById('checklist-banner-v18');
+        if (existingBanner) existingBanner.remove();
+
+        const EXPECTED = {expected_json};
+        const MODE     = {mode_json};
+        console.log('[CHECKLIST v12.19] Expected data:', EXPECTED);
+        console.log('[CHECKLIST v12.19] Mode:', MODE);
+
+        // Field configuration: [display name, field ID, fieldType, isMultiSelect, expectedKey]
+        const FIELDS = [
+            ['Weekday',          'weekday_ids',               'select2',   true,  'weekday'],
+            ['Store/Locations',  'store_ids',                 'select2',   true,  'locations'],
+            ['Brand',            'brand_id',                  'select2',   false, 'brand'],
+            ['Linked Brand',     'linked_brand_id',           'select2',   false, 'linked_brand'],
+            ['Category',         'category_ids',              'select2',   true,  'categories'],
+            ['Discount %',       'discount_rate',             'input',     false, 'discount'],
+            ['Rebate Type',      'daily_discount_type_id',    'select2',   false, 'rebate_type'],
+            ['Vendor Rebate %',  'rebate_percent',            'input',     false, 'vendor_contrib'],
+            ['After Wholesale?', 'rebate_wholesale_discount', 'checkbox',  false, 'after_wholesale'],
+            ['Start Date',       'date_start',                'input',     false, 'start_date'],
+            ['End Date',         'date_end',                  'input',     false, 'end_date'],
+        ];
+
+        // ── Banner container ──────────────────────────────────────────────────
+        const banner = document.createElement('div');
+        banner.id = 'checklist-banner-v18';
+        banner.style.cssText = `
+            position: fixed; top: 10px; right: 10px; width: 400px;
+            max-height: 90vh; overflow-y: auto;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            border: 2px solid #4a90d9; border-radius: 12px; padding: 15px;
+            z-index: 100000; font-family: 'Segoe UI', system-ui, sans-serif;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4); color: #fff;
+        `;
+
+        // ── Header ────────────────────────────────────────────────────────────
+        const headerTitle = MODE === 'compare' ? '🔍 Compare to Sheet' : '📋 Deal Entry Checklist';
+        const multiDayBanner = EXPECTED.multi_day_info && EXPECTED.multi_day_info.is_multi_day
+            ? `<div style="background:#2d3a5e;border:1px solid #4a90d9;border-radius:6px;padding:6px 10px;margin-bottom:10px;font-size:12px;">
+                <span style="color:#ffc107;">ℹ️</span>
+                <strong style="color:#ffc107;">Multi-Day Deal:</strong>
+                <span style="color:#ccc;">${{EXPECTED.multi_day_info.total_days}}-day deal (${{EXPECTED.multi_day_info.weekdays.join(', ')}})</span>
+               </div>`
+            : '';
+
+        const header = document.createElement('div');
+        header.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;
+                        margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid #4a90d9;">
+                <span style="font-size:16px;font-weight:600;color:#4a90d9;">${{headerTitle}}</span>
+                <button id="checklist-close-btn"
+                    style="background:#dc3545;color:white;border:none;border-radius:4px;
+                           padding:4px 10px;cursor:pointer;font-size:12px;">✕</button>
+            </div>
+            ${{multiDayBanner}}
+            <div style="font-size:11px;color:#888;margin-bottom:10px;">
+                ✅ = Correct | ❌ = Mismatch | ⬜ = Empty | 🟡 = Partial
+            </div>
+        `;
+        banner.appendChild(header);
+
+        // ── Checklist rows ────────────────────────────────────────────────────
+        const checklist = document.createElement('div');
+        checklist.id = 'checklist-items';
+
+        FIELDS.forEach(([label, fieldId, fieldType, isMulti, expectedKey]) => {{
+            const expectedVal = EXPECTED[expectedKey];
+            let displayExpected;
+            if (expectedVal === true)  {{ displayExpected = 'Yes'; }}
+            else if (expectedVal === false) {{ displayExpected = 'No'; }}
+            else if (expectedVal === '' || expectedVal === null || expectedVal === undefined) {{
+                displayExpected = expectedKey === 'linked_brand' ? '(none - leave empty)' : '(not specified)';
+            }} else {{
+                displayExpected = String(expectedVal);
+            }}
+
+            const row = document.createElement('div');
+            row.className = 'checklist-row';
+            row.dataset.fieldId    = fieldId;
+            row.dataset.fieldType  = fieldType;
+            row.dataset.isMulti    = String(isMulti);
+            row.dataset.expectedKey = expectedKey;
+            row.style.cssText = `
+                display:flex; align-items:flex-start; padding:8px 10px; margin-bottom:6px;
+                border-radius:6px; border-left:3px solid #444;
+                background:rgba(255,255,255,0.03); transition:all 0.3s;
+            `;
+
+            row.innerHTML = `
+                <span class="status-icon" style="font-size:16px;margin-right:10px;min-width:20px;">⬜</span>
+                <div style="flex:1;">
+                    <div style="font-weight:500;font-size:13px;color:#fff;">${{label}}</div>
+                    <div class="expected-val" style="font-size:11px;color:#aaa;margin-top:2px;">
+                        Expected: <span style="color:#4a90d9;">${{displayExpected}}</span>
+                    </div>
+                    <div class="actual-val" style="font-size:11px;color:#888;margin-top:2px;">
+                        Current: <span class="actual-value" style="color:#fff;">-</span>
+                    </div>
+                    <div class="progress-info" style="font-size:10px;color:#ffc107;margin-top:2px;display:none;"></div>
+                </div>
+            `;
+            checklist.appendChild(row);
+        }});
+
+        banner.appendChild(checklist);
+
+        // ── Summary + critical warning ─────────────────────────────────────
+        const summary = document.createElement('div');
+        summary.id = 'checklist-summary';
+        summary.style.cssText = 'margin-top:12px;padding-top:10px;border-top:1px solid #4a90d9;font-size:12px;text-align:center;';
+        summary.innerHTML = '<span style="color:#888;">Validating...</span>';
+        banner.appendChild(summary);
+
+        const criticalWarning = document.createElement('div');
+        criticalWarning.id = 'critical-warning';
+        criticalWarning.style.cssText = `
+            margin-top:10px; padding:8px;
+            background:rgba(220,53,69,0.2); border:1px solid #dc3545;
+            border-radius:6px; font-size:11px; color:#ff6b6b; display:none;
+        `;
+        banner.appendChild(criticalWarning);
+
+        document.body.appendChild(banner);
+
+        document.getElementById('checklist-close-btn').onclick = () => {{
+            banner.style.display = banner.style.display === 'none' ? 'block' : 'none';
+        }};
+
+        // ── Field readers ─────────────────────────────────────────────────────
+        function getSelect2Value(fieldId, isMulti) {{
+            if (!isMulti) {{
+                const container = document.getElementById('select2-' + fieldId + '-container');
+                if (container) {{
+                    const title = container.getAttribute('title');
+                    if (title && title !== '- Select -') return [title];
+                }}
+                return [];
+            }}
+            const select = document.getElementById(fieldId);
+            if (!select) return [];
+            const selected = [];
+            for (let i = 0; i < select.options.length; i++) {{
+                if (select.options[i].selected) {{
+                    const text = select.options[i].text.trim();
+                    if (text && text !== '- Select -') selected.push(text);
+                }}
+            }}
+            return selected;
+        }}
+
+        function getInputValue(fieldId) {{
+            const input = document.getElementById(fieldId);
+            return input ? input.value.trim() : '';
+        }}
+
+        function getCheckboxValue(fieldId) {{
+            const cb = document.getElementById(fieldId);
+            return cb ? cb.checked : false;
+        }}
+
+        function normalizeString(s) {{
+            return String(s || '').toLowerCase().trim().replace(/\\s+/g, ' ');
+        }}
+
+        function normalizePct(s) {{
+            const n = parseFloat(String(s).replace('%', '').trim());
+            return isNaN(n) ? '' : String(Math.round(n * 100) / 100);
+        }}
+
+        // ── Per-field comparison ──────────────────────────────────────────────
+        function compareField(fieldId, fieldType, isMulti, expectedKey, actual) {{
+            const expected = EXPECTED[expectedKey];
+
+            if (fieldType === 'checkbox') {{
+                const expBool = (expected === true || String(expected).toLowerCase() === 'true');
+                return actual === expBool ? 'correct' : 'mismatch';
+            }}
+
+            if (expectedKey === 'start_date' || expectedKey === 'end_date') {{
+                const actualVal = Array.isArray(actual) ? (actual[0] || '') : (actual || '');
+                if (!expected || expected === '') return 'empty';
+                if (!actualVal || actualVal.trim() === '') return 'empty';
+                function normDate(d) {{
+                    const parts = String(d).trim().split('/');
+                    return parts.length === 3
+                        ? parseInt(parts[0]) + '/' + parseInt(parts[1]) + '/' + parts[2]
+                        : String(d).trim();
+                }}
+                return normDate(actualVal) === normDate(expected) ? 'correct' : 'mismatch';
+            }}
+
+            if (expectedKey === 'vendor_contrib') {{
+                const actualVal = Array.isArray(actual) ? (actual[0] || '') : (actual || '');
+                if (!expected && !actualVal) return 'empty';
+                return normalizePct(actualVal) === normalizePct(expected) ? 'correct' : 'mismatch';
+            }}
+
+            if (isMulti && Array.isArray(actual)) {{
+                if (!expected || expected === '') return actual.length > 0 ? 'correct' : 'empty';
+                const expLower = expected.toLowerCase();
+                if (expLower === 'all' || expLower === 'all locations' || expLower === 'all categories')
+                    return actual.length === 0 ? 'empty' : 'correct';
+                const expectedItems = expected.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+                const actualLower   = actual.map(s => s.toLowerCase().trim());
+                const missing = expectedItems.filter(e => !actualLower.includes(e));
+                if (missing.length === 0) return 'correct';
+                if (actual.length > 0)   return 'partial';
+                return 'empty';
+            }}
+
+            if (!expected || expected === '') return 'empty';
+            const actualVal   = Array.isArray(actual) ? (actual[0] || '') : actual;
+            const actualNorm  = normalizeString(actualVal);
+            const expectedNorm = normalizeString(expected);
+            if (!actualNorm || actualNorm === '- select -') return 'empty';
+            return (actualNorm === expectedNorm ||
+                    actualNorm.includes(expectedNorm) ||
+                    expectedNorm.includes(actualNorm)) ? 'correct' : 'mismatch';
+        }}
+
+        // ── Main validation loop ──────────────────────────────────────────────
+        function validateAllFields() {{
+            const rows = document.querySelectorAll('.checklist-row');
+            let correctCount = 0, mismatchCount = 0, emptyCount = 0, partialCount = 0;
+            const criticalMissing = [];
+
+            rows.forEach(row => {{
+                const fieldId     = row.dataset.fieldId;
+                const expectedKey = row.dataset.expectedKey;
+                const fieldType   = row.dataset.fieldType;
+                const isMulti     = row.dataset.isMulti === 'true';
+
+                let actual;
+                if      (fieldType === 'select2') actual = getSelect2Value(fieldId, isMulti);
+                else if (fieldType === 'checkbox') actual = getCheckboxValue(fieldId);
+                else                               actual = getInputValue(fieldId);
+
+                const status      = compareField(fieldId, fieldType, isMulti, expectedKey, actual);
+                const icon        = row.querySelector('.status-icon');
+                const actualSpan  = row.querySelector('.actual-value');
+                const progressInfo = row.querySelector('.progress-info');
+
+                // Display actual value
+                if (typeof actual === 'boolean') {{
+                    actualSpan.textContent = actual ? 'Yes' : 'No';
+                    progressInfo.style.display = 'none';
+                }} else if (Array.isArray(actual)) {{
+                    actualSpan.textContent = actual.length > 0 ? actual.join(', ') : '(empty)';
+                    if (isMulti && EXPECTED[expectedKey]) {{
+                        const expItems = String(EXPECTED[expectedKey]).split(',').map(s => s.trim()).filter(Boolean);
+                        if (expItems.length > 1) {{
+                            const matched = actual.filter(a => expItems.some(e => e.toLowerCase() === a.toLowerCase()));
+                            progressInfo.textContent = `${{matched.length}} / ${{expItems.length}} matched`;
+                            progressInfo.style.display = 'block';
+                        }} else {{ progressInfo.style.display = 'none'; }}
+                    }} else {{ progressInfo.style.display = 'none'; }}
+                }} else {{
+                    actualSpan.textContent = actual || '(empty)';
+                    progressInfo.style.display = 'none';
+                }}
+
+                if (status === 'correct') {{
+                    icon.textContent = '✅';
+                    row.style.borderLeftColor = '#28a745';
+                    row.style.background = 'rgba(40,167,69,0.1)';
+                    correctCount++;
+                }} else if (status === 'partial') {{
+                    icon.textContent = '🟡';
+                    row.style.borderLeftColor = '#ffc107';
+                    row.style.background = 'rgba(255,193,7,0.1)';
+                    partialCount++;
+                }} else if (status === 'mismatch') {{
+                    icon.textContent = '❌';
+                    row.style.borderLeftColor = '#dc3545';
+                    row.style.background = 'rgba(220,53,69,0.1)';
+                    mismatchCount++;
+                }} else {{
+                    icon.textContent = '⬜';
+                    row.style.borderLeftColor = '#666';
+                    row.style.background = 'rgba(255,255,255,0.03)';
+                    emptyCount++;
+                }}
+
+                if (expectedKey === 'weekday' && (status === 'empty' || (Array.isArray(actual) && actual.length === 0)))
+                    criticalMissing.push('Weekday');
+                if (expectedKey === 'rebate_type' && (status === 'empty' || !actual || (Array.isArray(actual) && actual.length === 0)))
+                    criticalMissing.push('Rebate Type');
+            }});
+
+            const sumEl = document.getElementById('checklist-summary');
+            if (mismatchCount > 0)
+                sumEl.innerHTML = `<span style="color:#dc3545;">❌ ${{mismatchCount}} field(s) don't match</span>`;
+            else if (partialCount > 0)
+                sumEl.innerHTML = `<span style="color:#ffc107;">🟡 ${{partialCount}} field(s) partially filled</span>`;
+            else if (emptyCount > 0)
+                sumEl.innerHTML = `<span style="color:#888;">⬜ ${{emptyCount}} field(s) need to be filled</span>`;
+            else
+                sumEl.innerHTML = `<span style="color:#28a745;">✅ All fields validated!</span>`;
+
+            const warnEl = document.getElementById('critical-warning');
+            if (criticalMissing.length > 0) {{
+                warnEl.style.display = 'block';
+                warnEl.innerHTML = `❌ <strong>CANNOT SAVE:</strong> ${{criticalMissing.join(' and ')}} must be selected!`;
+            }} else {{
+                warnEl.style.display = 'none';
+            }}
+
+            return {{ correctCount, mismatchCount, emptyCount, partialCount, criticalMissing }};
+        }}
+
+        // ── Save button interception ──────────────────────────────────────────
+        function interceptSaveButton() {{
+            const saveBtn = document.querySelector('.btn-submit, button[type="submit"]');
+            if (saveBtn && !saveBtn.dataset.checklistIntercepted) {{
+                saveBtn.dataset.checklistIntercepted = 'true';
+                const originalOnClick = saveBtn.onclick;
+                saveBtn.onclick = function(e) {{
+                    const result = validateAllFields();
+                    if (result.criticalMissing.length > 0) {{
+                        e.preventDefault();
+                        e.stopPropagation();
+                        alert('❌ Cannot save: ' + result.criticalMissing.join(' and ') + ' must be selected!');
+                        return false;
+                    }}
+                    if (originalOnClick) return originalOnClick.call(this, e);
+                }};
+            }}
+        }}
+
+        // ── Poll every 500ms ──────────────────────────────────────────────────
+        validateAllFields();
+        interceptSaveButton();
+
+        // Auto-dismiss after 10 minutes or when banner is manually closed.
+        // Do NOT auto-dismiss based on modal selectors — the MIS system does not
+        // use Bootstrap .modal.show classes, so that check always fires false and
+        // destroys the banner 500ms after injection.
+        const validationInterval = setInterval(() => {{
+            if (!document.getElementById('checklist-banner-v18')) {{
+                clearInterval(validationInterval); return;
+            }}
+            validateAllFields();
+            interceptSaveButton();
+        }}, 500);
+
+        // Hard stop after 10 minutes
+        setTimeout(() => {{
+            clearInterval(validationInterval);
+        }}, 600000);
+
+        console.log('[CHECKLIST v12.19] Banner injected. Mode:', MODE, 'Expected:', EXPECTED);
+    }})();
+    """
+
+    try:
+        print("[CHECKLIST] Injecting checklist banner...")
+        print(f"[CHECKLIST] Mode: {mode}, Keys: {list(expected_data.keys()) if expected_data else 'none'}")
+        driver.execute_script(js_code)
+        print("[CHECKLIST] ✅ Checklist banner injected successfully")
+    except Exception as e:
+        print(f"[CHECKLIST] ❌ Failed to inject banner: {e}")
+        raise
+    
 class BlazeInventoryReporter:
     """
     Blaze inventory reporting class. Monolith: lines 6851–7096.

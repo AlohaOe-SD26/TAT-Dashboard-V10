@@ -238,8 +238,11 @@ def match():
     Accepts either uploaded CSV file or previously pulled CSV from session.
     """
     try:
-        tab_name = request.form.get('tab')
+        # Accept both FormData and JSON for tab (Priority 3 fix from handoff)
+        _json = request.get_json(silent=True) or {}
+        tab_name = request.form.get('tab') or _json.get('tab') or session.get_mis_current_sheet()
         csv_file = request.files.get('csv')
+        local_csv_path = request.form.get('local_csv_path') or _json.get('local_csv_path')
 
         if not tab_name:
             return jsonify({'success': False, 'error': 'No tab specified'})

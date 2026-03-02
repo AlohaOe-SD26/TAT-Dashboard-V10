@@ -73,7 +73,7 @@ const api = {
     // ── ID Matcher ────────────────────────────────────────────────────────────
     matcher: {
         generateCSV:   (body)  => apiPost('/api/mis/generate-csv', body),
-        run:           (body)  => apiPost('/api/mis/match', body),
+        run:           (body, isFormData = false)  => apiPost('/api/mis/match', body, isFormData),
         applyMatches:  (body)  => apiPost('/api/mis/apply-matches', body),
         applyBlaze:    (body)  => apiPost('/api/mis/apply-blaze-titles', body),
         applySplitId:        (body)  => apiPost('/api/mis/apply-split-id', body),

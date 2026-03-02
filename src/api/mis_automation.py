@@ -261,7 +261,7 @@ def inject_validation():
 def open_sheet_row():
     """Open a specific Google Sheet row in the browser."""
     try:
-        from src.automation.browser import open_google_sheet_in_browser
+        from src.integrations.google_sheets import open_google_sheet_in_browser
 
         data           = request.get_json() or {}
         spreadsheet_id = session.get_spreadsheet_id()
@@ -281,7 +281,86 @@ def open_sheet_row():
     except Exception as e:
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})
+@bp.route('/api/mis/lookup-mis-id', methods=['POST'])
+def lookup_mis_id():
+    """
+    Browser automation: filter MIS datatable to the given ID and open its edit modal.
+    Optionally injects validation checklist if row_data is provided.
+    Monolith: api_mis_lookup_mis_id(), line ~17600.
+    """
+    try:
+        from src.automation.mis_entry import filter_and_open_mis_id, ensure_mis_ready, strip_mis_id_tag
+        from src.api.blaze import inject_mis_validation, inject_checklist_banner
 
+        session.set('automation_in_progress', True)
+        data     = request.get_json() or {}
+        mis_id   = str(data.get('mis_id', '')).strip()
+        row_data = data.get('row_data', None)
+
+        if not mis_id:
+            session.set('automation_in_progress', False)
+            return jsonify({'success': False, 'error': 'No MIS ID provided'})
+
+        mis_id = strip_mis_id_tag(mis_id)
+        if not mis_id or not mis_id.isdigit():
+            session.set('automation_in_progress', False)
+            return jsonify({'success': False, 'error': f'Invalid MIS ID format: {mis_id}'})
+
+        driver = session.get_browser()
+        if not driver:
+            session.set('automation_in_progress', False)
+            return jsonify({'success': False, 'error': 'Browser not initialized. Please click Initialize first.'})
+
+        # Ensure MIS tab is open and logged in
+        try:
+            creds    = session.get('credentials') or {}
+            mis_user = creds.get('mis_username', '')
+            mis_pass = creds.get('mis_password', '')
+            ensure_mis_ready(driver, mis_user, mis_pass)
+        except Exception as e:
+            session.set('automation_in_progress', False)
+            return jsonify({'success': False, 'error': str(e)})
+
+        print(f"[MIS LOOKUP] Looking up MIS ID: {mis_id}, row_data: {row_data is not None}")
+
+        if filter_and_open_mis_id(driver, mis_id):
+            import time
+            time.sleep(1)
+            if row_data:
+                try:
+                    expected_data = {
+                        'brand':          row_data.get('brand', ''),
+                        'linked_brand':   row_data.get('linked_brand', ''),
+                        'weekday':        row_data.get('weekday', ''),
+                        'categories':     row_data.get('categories', ''),
+                        'discount':       row_data.get('discount', ''),
+                        'vendor_contrib': row_data.get('vendor_contrib', ''),
+                        'locations':      row_data.get('locations', 'All Locations'),
+                        'rebate_type':    row_data.get('rebate_type', ''),
+                        'after_wholesale': row_data.get('after_wholesale', False),
+                    }
+                    # v12.22.5: inject floating checklist panel
+                    inject_checklist_banner(driver, expected_data, mode='compare')
+                    print(f"[MIS LOOKUP] ✅ Checklist banner injected for MIS ID {mis_id}")
+                    # v12.22.6: switch V2 validator from manual → automation mode
+                    inject_mis_validation(driver, expected_data=expected_data)
+                    print(f"[MIS LOOKUP] ✅ Validator switched to automation mode")
+                except Exception as e:
+                    print(f"[MIS LOOKUP] ❌ Could not inject checklist: {e}")
+                    inject_mis_validation(driver, expected_data=None)
+            else:
+                inject_mis_validation(driver, expected_data=None)
+
+            session.set('automation_in_progress', False)
+            return jsonify({'success': True, 'message': f'Opened MIS ID {mis_id}'})
+
+        session.set('automation_in_progress', False)
+        return jsonify({'success': False, 'error': f'Failed to find/open MIS ID {mis_id}'})
+
+    except Exception as e:
+        session.set('automation_in_progress', False)
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
 

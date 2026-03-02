@@ -536,54 +536,6 @@ def review_discrepancy():
 
 # ── Lookup + Validation ───────────────────────────────────────────────────────
 
-@bp.route('/api/mis/lookup-mis-id', methods=['POST'])
-def lookup_mis_id():
-    """Look up MIS ID in CSV and return full entry data."""
-    try:
-        data   = request.get_json() or {}
-        mis_id = str(data.get('mis_id', '')).strip()
-        if not mis_id:
-            return jsonify({'success': False, 'error': 'No MIS ID provided'})
-
-        mis_df = session.get_mis_df()
-        if mis_df is None or mis_df.empty:
-            return jsonify({'success': False, 'error': 'No MIS CSV loaded'})
-
-        id_col = None
-        for candidate in ('ID', 'id', 'MIS ID', 'Mis Id'):
-            if candidate in mis_df.columns:
-                id_col = candidate
-                break
-
-        if not id_col:
-            return jsonify({'success': False, 'error': 'Cannot find ID column in CSV'})
-
-        matches = mis_df[mis_df[id_col].astype(str).str.strip() == mis_id]
-        if matches.empty:
-            return jsonify({'success': False, 'error': f'MIS ID {mis_id} not found in CSV'})
-
-        row = matches.iloc[0]
-        return jsonify({
-            'success': True,
-            'entry': {
-                'id':          str(row.get('ID', '')),
-                'brand':       str(row.get('Brand', '')),
-                'weekday':     str(row.get('Weekday', '')),
-                'discount':    str(row.get('Daily Deal Discount', '')),
-                'vendor_pct':  str(row.get('Discount paid by vendor', '')),
-                'locations':   str(row.get('Store', '')),
-                'start_date':  str(row.get('Start date', '')),
-                'end_date':    str(row.get('End date', '')),
-                'category':    str(row.get('Category', '')),
-                'rebate_type': str(row.get('Rebate type', '')),
-            },
-        })
-
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)})
-
-
 @bp.route('/api/mis/validate-lookup', methods=['POST'])
 def validate_lookup():
     """
@@ -648,40 +600,130 @@ def validate_lookup():
 @bp.route('/api/mis/compare-to-sheet', methods=['POST'])
 def compare_to_sheet():
     """
-    ValidationEngine Mode B: Compare a live MIS entry against its Google Sheet row.
-    User clicks an MIS entry → validate against the Sheet.
+    Compare to Google Sheet: user clicked the floating teal button injected by
+    inject_mis_validation(), then clicked a MIS datatable row.
+
+    Flow (monolith v12.19–v12.22):
+      1. JS calls this route with the MIS ID of the clicked row
+      2. Route searches Google Sheet for that MIS ID
+      3. Builds expected_data dict from the Sheet row
+      4. Injects checklist banner (inject_checklist_banner, mode='compare')
+      5. Switches V2 validator to automation mode (inject_mis_validation)
+      6. Returns { success, mode:'automation', expected_data, message }
+         so the frontend's JS can confirm the switch
+
+    Monolith: api_mis_compare_to_sheet(), ~v12.21.
     """
     try:
-        data = request.get_json() or {}
-        # Expect source (MIS live data) and target (expected Sheet data)
-        source_data = data.get('source', {})
-        target_data = data.get('target', {})
+        from src.api.blaze import inject_mis_validation, inject_checklist_banner
+        from src.utils.sheet_helpers import get_col
+        from src.utils.location_helpers import resolve_location_columns, format_location_display
 
-        if not source_data:
-            return jsonify({'success': False, 'error': 'No source data provided'})
+        data   = request.get_json() or {}
+        mis_id = str(data.get('mis_id', '')).strip()
 
-        source = ValidationRecord(**{k: source_data.get(k, '') for k in ValidationRecord.__dataclass_fields__})
-        target = ValidationRecord(**{k: target_data.get(k, '') for k in ValidationRecord.__dataclass_fields__})
+        if not mis_id:
+            return jsonify({'success': False, 'error': 'No MIS ID provided'})
 
-        field_results = validation_engine.compare(source, target)
-        summary       = validation_engine.summary(field_results)
+        driver = session.get_browser()
+        if not driver:
+            return jsonify({'success': False, 'error': 'Browser not initialized. Please click Initialize first.'})
+
+        print(f"\n{'='*60}")
+        print(f"[COMPARE-TO-SHEET] 🔍 Manual comparison for MIS ID: {mis_id}")
+        print(f"{'='*60}")
+
+        google_df = session.get_google_df()
+        if google_df is None or google_df.empty:
+            print("[COMPARE-TO-SHEET] ⚠️ No Google Sheet data loaded")
+            return jsonify({'success': False, 'error': 'No Google Sheet loaded. Please run Audit first.'})
+
+        print(f"[COMPARE-TO-SHEET] Google Sheet loaded: {len(google_df)} rows")
+
+        bmap = session.get_mis_bracket_map()
+        pmap = session.get_mis_prefix_map()
+
+        # ── Search for MIS ID in sheet ────────────────────────────────────────
+        matching_rows = []
+        for _, row in google_df.iterrows():
+            for id_col in ('MIS ID', 'ID', 'Mis Id', 'MIS_ID', 'mis_id'):
+                if id_col in google_df.columns:
+                    sheet_val = str(row.get(id_col, '')).strip()
+                    if mis_id in sheet_val or sheet_val == mis_id:
+                        matching_rows.append(row)
+                        break
+
+        if not matching_rows:
+            print(f"[COMPARE-TO-SHEET] MIS ID {mis_id} not found — switching to manual mode")
+            inject_mis_validation(driver, expected_data=None)
+            return jsonify({
+                'success': True,
+                'mode': 'manual',
+                'message': f'MIS ID {mis_id} not found in Google Sheet — manual mode active',
+            })
+
+        # ── Build expected_data from first (or combined) matching row(s) ─────
+        row = matching_rows[0]
+
+        # Resolve rebate type from Retail?/Wholesale? columns (monolith pattern)
+        is_retail    = str(get_col(row, ['Retail?', 'Retail'],       '', bmap, pmap)).strip().upper() in ('TRUE', 'YES', '1')
+        is_wholesale = str(get_col(row, ['Wholesale?', 'Wholesale'], '', bmap, pmap)).strip().upper() in ('TRUE', 'YES', '1')
+        after_ws_raw = str(get_col(row, ['Rebate After Wholesale', 'After Wholesale',
+                                          'After Wholesale Discount', 'Rebate after Wholesale?'],
+                                    '', bmap, pmap)).strip()
+        if is_retail:
+            rebate_type = 'Retail'
+        elif is_wholesale:
+            rebate_type = 'Wholesale'
+        else:
+            rebate_type = str(get_col(row, ['[Rebate type]', 'Rebate type', 'Rebate Type'], '', bmap, pmap)).strip()
+
+        # Multi-day: combine weekdays from all matching rows
+        if len(matching_rows) > 1:
+            weekdays = [str(get_col(r, ['[Weekday]', 'Weekday', 'Day of Week'], '', bmap, pmap)).strip()
+                        for r in matching_rows]
+            combined_weekday = ', '.join(w for w in weekdays if w)
+        else:
+            combined_weekday = str(get_col(row, ['[Weekday]', 'Weekday', 'Day of Week'], '', bmap, pmap)).strip()
+
+        loc_raw, exc_raw = resolve_location_columns(row)
+        locations_val    = format_location_display(loc_raw, exc_raw) if loc_raw else 'All Locations'
+
+        expected_data = {
+            'brand':          str(get_col(row, ['[Brand]', 'Brand'],                                  '', bmap, pmap)).strip(),
+            'linked_brand':   str(get_col(row, ['Linked Brand'],                                       '', bmap, pmap)).strip(),
+            'weekday':        combined_weekday,
+            'categories':     str(get_col(row, ['[Category]', 'Categories'],                           '', bmap, pmap)).strip(),
+            'discount':       str(get_col(row, ['[Daily Deal Discount]', 'Deal Discount Value/Type',
+                                                  'Deal Discount', 'Discount'],                        '', bmap, pmap)).strip(),
+            'vendor_contrib': str(get_col(row, ['[Discount paid by vendor]', 'Brand Contribution % (Credit)',
+                                                  'Vendor Contribution', 'Vendor %'],                  '', bmap, pmap)).strip(),
+            'locations':      locations_val,
+            'rebate_type':    rebate_type,
+            'after_wholesale': after_ws_raw.lower() in ('true', 'yes', '1'),
+        }
+
+        print(f"[COMPARE-TO-SHEET] Brand: {expected_data['brand']}, Weekday: {expected_data['weekday']}")
+        print(f"[COMPARE-TO-SHEET] Discount: '{expected_data['discount']}', Vendor %: '{expected_data['vendor_contrib']}'")
+        print(f"[COMPARE-TO-SHEET] Rebate Type: '{expected_data['rebate_type']}'")
+
+        # ── v12.19: Inject checklist banner (floating panel) ──────────────────
+        print("[COMPARE-TO-SHEET] ⏳ Injecting checklist banner in compare mode")
+        inject_checklist_banner(driver, expected_data, mode='compare')
+        print("[COMPARE-TO-SHEET] ✅ Checklist banner injected")
+
+        # ── v12.21: Switch V2 validator to automation mode ────────────────────
+        inject_mis_validation(driver, expected_data=expected_data)
+        print("[COMPARE-TO-SHEET] ✅ Validator switched to automation mode")
 
         return jsonify({
             'success': True,
-            'summary': summary.to_dict(),
-            'fields':  [
-                {
-                    'field':    fr.field,
-                    'status':   fr.status,
-                    'severity': fr.severity,
-                    'expected': fr.expected,
-                    'actual':   fr.actual,
-                    'detail':   fr.detail,
-                }
-                for fr in field_results
-            ],
+            'mode': 'automation',       # JS checks this to confirm switch
+            'expected_data': expected_data,
+            'message': f'Found MIS ID {mis_id} in Google Sheet — checklist active',
         })
 
     except Exception as e:
+        print(f"[COMPARE-TO-SHEET] ❌ Error: {e}")
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})

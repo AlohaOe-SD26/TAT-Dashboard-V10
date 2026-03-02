@@ -356,6 +356,64 @@ def ensure_mis_ready(driver: Any, username: str = '', password: str = '') -> boo
     return True
 
 
+# ── filter_and_open_mis_id ────────────────────────────────────────────────────
+
+def filter_and_open_mis_id(driver: Any, mis_id: str) -> bool:
+    """
+    Filter MIS datatable by ID and open the entry's edit popup.
+    Monolith: filter_and_open_mis_id()
+    """
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.common.keys import Keys
+
+    try:
+        # Close any open modals first
+        try:
+            for btn in driver.find_elements(By.CSS_SELECTOR, "button.close[data-dismiss='modal']"):
+                if btn.is_displayed():
+                    btn.click()
+                    time.sleep(0.5)
+                    break
+        except Exception:
+            pass
+
+        # Wait for MIS datatable
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "daily-discount"))
+        )
+
+        # Set table to show All rows
+        try:
+            length_select = WebDriverWait(driver, 3).until(
+                EC.presence_of_element_located((By.NAME, "daily-discount_length"))
+            )
+            length_select.send_keys("All")
+        except Exception:
+            pass
+
+        # Search for the MIS ID
+        search_input = driver.find_element(By.CSS_SELECTOR, "input[type='search']")
+        search_input.click()
+        search_input.send_keys(Keys.CONTROL + "a")
+        search_input.send_keys(Keys.DELETE)
+        search_input.send_keys(str(mis_id))
+        time.sleep(1)
+
+        # Click the edit button for this specific ID
+        edit_btn = WebDriverWait(driver, 5).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, f"a.btn-table-dialog[data-id='{mis_id}']"))
+        )
+        edit_btn.click()
+        time.sleep(1)
+        return True
+
+    except Exception as e:
+        print(f"[ERROR] Failed to filter/open MIS ID {mis_id}: {e}")
+        return False
+
+
 # ── fill_deal_form ────────────────────────────────────────────────────────────
 
 def fill_deal_form(driver: Any, payload: dict) -> dict:

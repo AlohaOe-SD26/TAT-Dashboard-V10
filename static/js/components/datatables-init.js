@@ -842,11 +842,13 @@ return;
     formData.append('focus_date', focusDate);
     formData.append('expand_month', expandMonth);
     
-    try {
-        const data = await api.matcher.run(formData, true);
+try {
+        // Direct fetch with FormData — api.matcher.run sends JSON which breaks form parsing
+        const response = await fetch('/api/mis/match', { method: 'POST', body: formData });
+        const data = await response.json();
         
         if (data.success) {
-            matchesData = data.matches; 
+            matchesData = data.matches;
             displayMatchResults(data.matches);
             // v12.5: Reset apply buttons visibility after new matcher run
             approvedMatches = {};
@@ -854,7 +856,7 @@ return;
         } else {
             alert('Error: ' + data.error);
         }
-    } catch(e) { alert(e); } 
+    } catch(e) { alert(e); }
     finally {
         btn.disabled = false;
         btn.textContent = 'Run Matcher';
