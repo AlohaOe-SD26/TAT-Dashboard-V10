@@ -323,33 +323,84 @@ def lookup_mis_id():
 
         print(f"[MIS LOOKUP] Looking up MIS ID: {mis_id}, row_data: {row_data is not None}")
 
+        # ── SMART FALLBACK (monolith v12.12.5) ───────────────────────────────
+        # Most call sites (audit tab links) pass no row_data.
+        # Search google_df so the checklist fires for every MIS ID click.
+        if not row_data:
+            print(f"[MIS LOOKUP] No row_data — searching Google Sheet for {mis_id}")
+            try:
+                from src.utils.sheet_helpers import get_col
+                from src.utils.location_helpers import resolve_location_columns, format_location_display
+                google_df = session.get_google_df()
+                bmap = session.get_mis_bracket_map()
+                pmap = session.get_mis_prefix_map()
+                if google_df is not None and not google_df.empty:
+                    for _, g_row in google_df.iterrows():
+                        for id_col in ('MIS ID', 'ID', 'Mis Id', 'MIS_ID', 'mis_id'):
+                            if id_col not in google_df.columns:
+                                continue
+                            sheet_val = str(g_row.get(id_col, '')).strip()
+                            if mis_id in sheet_val or sheet_val == mis_id:
+                                loc_raw, exc_raw = resolve_location_columns(g_row)
+                                is_retail = str(get_col(g_row, ['Retail?', 'Retail'], '', bmap, pmap)).strip().upper() in ('TRUE', 'YES', '1')
+                                is_wholesale = str(get_col(g_row, ['Wholesale?', 'Wholesale'], '', bmap, pmap)).strip().upper() in ('TRUE', 'YES', '1')
+                                aw = str(get_col(g_row, ['Rebate After Wholesale', 'After Wholesale', 'After Wholesale Discount'], '', bmap, pmap)).strip()
+                                if is_retail:
+                                    rebate_type = 'Retail'
+                                elif is_wholesale:
+                                    rebate_type = 'Wholesale'
+                                else:
+                                    rebate_type = str(get_col(g_row, ['[Rebate type]', 'Rebate type', 'Rebate Type'], '', bmap, pmap)).strip()
+                                row_data = {
+                                    'brand':          str(get_col(g_row, ['[Brand]', 'Brand'], '', bmap, pmap)).strip(),
+                                    'linked_brand':   str(get_col(g_row, ['Linked Brand'], '', bmap, pmap)).strip(),
+                                    'weekday':        str(get_col(g_row, ['[Weekday]', 'Weekday', 'Day of Week'], '', bmap, pmap)).strip(),
+                                    'categories':     str(get_col(g_row, ['[Category]', 'Categories'], '', bmap, pmap)).strip(),
+                                    'discount':       str(get_col(g_row, ['[Daily Deal Discount]', 'Deal Discount Value/Type', 'Deal Discount', 'Discount'], '', bmap, pmap)).strip(),
+                                    'vendor_contrib': str(get_col(g_row, ['[Discount paid by vendor]', 'Brand Contribution % (Credit)', 'Vendor Contribution', 'Vendor %'], '', bmap, pmap)).strip(),
+                                    'locations':      format_location_display(loc_raw, exc_raw) if loc_raw else 'All Locations',
+                                    'rebate_type':    rebate_type,
+                                    'after_wholesale': aw.lower() in ('true', 'yes', '1'),
+                                }
+                                print(f"[MIS LOOKUP] Sheet match: Brand={row_data['brand']}, Weekday={row_data['weekday']}")
+                                break
+                        if row_data:
+                            break
+                if not row_data:
+                    print(f"[MIS LOOKUP] {mis_id} not in Google Sheet — manual mode")
+            except Exception as _fb_e:
+                print(f"[MIS LOOKUP] Smart fallback error (non-fatal): {_fb_e}")
+                row_data = None
+
         if filter_and_open_mis_id(driver, mis_id):
             import time
-            time.sleep(1)
+            time.sleep(2)   # extra wait for modal to fully render before injection
             if row_data:
                 try:
                     expected_data = {
-                        'brand':          row_data.get('brand', ''),
-                        'linked_brand':   row_data.get('linked_brand', ''),
-                        'weekday':        row_data.get('weekday', ''),
-                        'categories':     row_data.get('categories', ''),
-                        'discount':       row_data.get('discount', ''),
-                        'vendor_contrib': row_data.get('vendor_contrib', ''),
-                        'locations':      row_data.get('locations', 'All Locations'),
-                        'rebate_type':    row_data.get('rebate_type', ''),
+                        'brand':           row_data.get('brand', ''),
+                        'linked_brand':    row_data.get('linked_brand', ''),
+                        'weekday':         row_data.get('weekday', ''),
+                        'categories':      row_data.get('categories', ''),
+                        'discount':        row_data.get('discount', ''),
+                        'vendor_contrib':  row_data.get('vendor_contrib', ''),
+                        'locations':       row_data.get('locations', 'All Locations'),
+                        'rebate_type':     row_data.get('rebate_type', ''),
                         'after_wholesale': row_data.get('after_wholesale', False),
                     }
                     # v12.22.5: inject floating checklist panel
                     inject_checklist_banner(driver, expected_data, mode='compare')
-                    print(f"[MIS LOOKUP] ✅ Checklist banner injected for MIS ID {mis_id}")
-                    # v12.22.6: switch V2 validator from manual → automation mode
+                    print(f"[MIS LOOKUP] Checklist banner injected for MIS ID {mis_id}")
+                    # v12.22.6: switch V2 validator from manual to automation mode
                     inject_mis_validation(driver, expected_data=expected_data)
-                    print(f"[MIS LOOKUP] ✅ Validator switched to automation mode")
+                    print(f"[MIS LOOKUP] Validator switched to automation mode")
                 except Exception as e:
-                    print(f"[MIS LOOKUP] ❌ Could not inject checklist: {e}")
+                    print(f"[MIS LOOKUP] Could not inject checklist: {e}")
+                    traceback.print_exc()
                     inject_mis_validation(driver, expected_data=None)
             else:
                 inject_mis_validation(driver, expected_data=None)
+                print(f"[MIS LOOKUP] Manual mode — no expected data available")
 
             session.set('automation_in_progress', False)
             return jsonify({'success': True, 'message': f'Opened MIS ID {mis_id}'})

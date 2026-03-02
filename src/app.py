@@ -1,6 +1,7 @@
-# src/app.py — v2.0
+# src/app.py — v2.1
 # Flask application factory. Registers all Blueprints.
 # Import create_app() from here — never instantiate Flask directly in route files.
+# v2.1: Added CORS headers (required by injected JS fetching from MIS browser tab)
 
 from __future__ import annotations
 import json
@@ -31,6 +32,17 @@ def create_app(config_override: dict | None = None) -> Flask:
 
     _init_active_profile()
     _register_blueprints(app)
+
+    # ── CORS headers (monolith v12.12.5) ─────────────────────────────────────
+    # The injected JS (inject_mis_validation / compare-to-sheet button) runs
+    # inside the MIS Selenium browser tab, which is cross-origin to Flask.
+    # Without these headers every fetch() from the injected JS is blocked.
+    @app.after_request
+    def add_cors_headers(response):
+        response.headers['Access-Control-Allow-Origin']  = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return response
 
     # ── Fix 7: Background validation monitor thread ───────────────────────────
     import threading as _threading

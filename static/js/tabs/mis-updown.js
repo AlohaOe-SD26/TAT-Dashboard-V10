@@ -869,7 +869,7 @@ function openUnifiedPreFlight(data, googleRow, sectionType, splitIdx, stepIdx) {
     // v12.18.3: Dynamic category options from Settings tab
     const categoryOptions = splitPlanningData.category_list && splitPlanningData.category_list.length > 0 
         ? splitPlanningData.category_list 
-        : ['Flower', 'Prerolls', 'Vapes', 'Edibles', 'Concentrates', 'Tinctures', 'Topicals', 'Accessories', 'Capsules', 'CBD', 'Other'];
+        : ['Flowers', 'Smalls Flower', 'Prerolls', 'Preroll Packs', 'Infused Prerolls', 'Accessories', 'AIO', 'Capsules', 'Clones', 'Drinks', 'Edibles', 'Infused Blunt Packs', 'Infused Blunts', 'Blunts', 'Infused Preroll Packs', 'Solvent Extracts', 'Solventless Extracts', 'Tinctures', 'Topicals', 'Vape Carts 1G'];
     // v12.21.3: Use stores from Settings tab (loaded via settingsCache)
     const storeOptions = settingsCache.stores && settingsCache.stores.length > 0
         ? settingsCache.stores

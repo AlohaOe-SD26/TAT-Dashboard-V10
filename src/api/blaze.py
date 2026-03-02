@@ -620,7 +620,7 @@ def inject_mis_validation(driver, expected_data=None) -> None:
 
         // Compare to Google Sheet button
         let listeningMode = false, notFoundMode = false, datatableClickHandler = null;
-        const FLASK_BACKEND = 'http://127.0.0.1:{os.environ.get("FLASK_PORT", "5000")}';
+        const FLASK_BACKEND = 'http://127.0.0.1:5000';
 
         function createCompareButton() {{
             if (validationState.compareButton) return;
@@ -1190,22 +1190,17 @@ def inject_checklist_banner(driver, expected_data: dict, mode: str = 'create') -
         validateAllFields();
         interceptSaveButton();
 
-        // Auto-dismiss after 10 minutes or when banner is manually closed.
-        // Do NOT auto-dismiss based on modal selectors — the MIS system does not
-        // use Bootstrap .modal.show classes, so that check always fires false and
-        // destroys the banner 500ms after injection.
         const validationInterval = setInterval(() => {{
             if (!document.getElementById('checklist-banner-v18')) {{
+                clearInterval(validationInterval); return;
+            }}
+            if (!document.querySelector('.modal.show, .modal[style*="display: block"]')) {{
+                document.getElementById('checklist-banner-v18')?.remove();
                 clearInterval(validationInterval); return;
             }}
             validateAllFields();
             interceptSaveButton();
         }}, 500);
-
-        // Hard stop after 10 minutes
-        setTimeout(() => {{
-            clearInterval(validationInterval);
-        }}, 600000);
 
         console.log('[CHECKLIST v12.19] Banner injected. Mode:', MODE, 'Expected:', EXPECTED);
     }})();

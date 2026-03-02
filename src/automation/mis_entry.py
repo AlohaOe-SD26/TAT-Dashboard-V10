@@ -286,6 +286,192 @@ def _select_stores(driver: Any, locations_str: str) -> bool:
         return False
 
 
+# ── _atomic_multi_select ──────────────────────────────────────────────────────
+
+def _atomic_multi_select(driver: Any, label_text: str, values: list | str, field_name: str) -> bool:
+    """
+    Fill a Select2 multi-select dropdown atomically.
+    Monolith: atomic_multi_select() — opens the dropdown ONCE, clicks each
+    option in sequence, then closes. Used for Weekday, Category, Store.
+
+    values: comma-separated string OR list of strings.
+    """
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.common.action_chains import ActionChains
+    from selenium.webdriver.common.keys import Keys
+
+    if isinstance(values, str):
+        values = [v.strip() for v in values.split(',') if v.strip()]
+    else:
+        values = [str(v).strip() for v in values if v and str(v).strip()]
+
+    if not values:
+        _log(f'[{field_name}] Skipping — no values', 'SKIP')
+        return True
+
+    # MIS field → select element ID mapping (monolith: FIELD_SELECT_MAP)
+    FIELD_SELECT_MAP = {
+        'Weekday':  'weekday_ids',
+        'Category': 'category_ids',
+        'Store':    'store_ids',
+    }
+    select_id = FIELD_SELECT_MAP.get(field_name, field_name.lower().replace(' ', '_'))
+
+    _log(f'[{field_name}] Atomic multi-select: {values}')
+
+    def _close_dropdown() -> None:
+        try:
+            ActionChains(driver).send_keys(Keys.ESCAPE).perform()
+            time.sleep(0.08)
+        except Exception:
+            pass
+        _click_backdrop(driver)
+
+    try:
+        # Step 1: Close any open dropdown
+        _close_dropdown()
+        time.sleep(0.1)
+
+        # Step 2: Locate Select2 container (try multiple selectors)
+        container = None
+        for css in (
+            f"select#{select_id} + .select2-container",
+            f"select[name='{select_id}'] + .select2-container",
+            f".select2-container[aria-labelledby*='{select_id}']",
+        ):
+            try:
+                container = driver.find_element(By.CSS_SELECTOR, css)
+                break
+            except Exception:
+                pass
+
+        if not container:
+            lbl_xpath = _build_xpath_contains(label_text)
+            try:
+                container = driver.find_element(
+                    By.XPATH,
+                    f"//label[contains(text(), {lbl_xpath})]/following::span[contains(@class,'select2-container')][1]"
+                )
+            except Exception:
+                pass
+
+        if not container:
+            _log(f'[{field_name}] Cannot find Select2 container', 'ERROR')
+            return False
+
+        # Step 3: Open dropdown ONCE
+        try:
+            sel_area = container.find_element(By.CSS_SELECTOR, '.select2-selection')
+            ActionChains(driver).move_to_element(sel_area).click().perform()
+        except Exception:
+            ActionChains(driver).move_to_element(container).click().perform()
+        time.sleep(0.3)
+
+        # Step 4: Get search input
+        search_input = None
+        for css in (
+            '.select2-dropdown .select2-search__field',
+            '.select2-container--open .select2-search__field',
+        ):
+            try:
+                si = WebDriverWait(driver, 2).until(
+                    EC.visibility_of_element_located((By.CSS_SELECTOR, css))
+                )
+                if si.is_displayed():
+                    search_input = si
+                    break
+            except Exception:
+                pass
+        if not search_input:
+            try:
+                search_input = container.find_element(By.CSS_SELECTOR, '.select2-search__field')
+            except Exception:
+                pass
+
+        # Step 5: For each value — type to filter, click option
+        selected_count = 0
+        for value in values:
+            # Re-open if dropdown closed between iterations
+            try:
+                is_open = 'select2-container--open' in (container.get_attribute('class') or '')
+            except Exception:
+                is_open = False
+            if not is_open:
+                try:
+                    ActionChains(driver).move_to_element(container).click().perform()
+                    time.sleep(0.25)
+                except Exception:
+                    pass
+
+            # Type to filter
+            if search_input:
+                try:
+                    search_input.clear()
+                    time.sleep(0.05)
+                    _fast_type(driver, search_input, value, field_name)
+                    time.sleep(0.3)
+                except Exception:
+                    # Re-acquire stale reference
+                    try:
+                        search_input = driver.find_element(
+                            By.CSS_SELECTOR, '.select2-container--open .select2-search__field'
+                        )
+                        search_input.clear()
+                        time.sleep(0.05)
+                        _fast_type(driver, search_input, value, field_name)
+                        time.sleep(0.3)
+                    except Exception:
+                        pass
+
+            # Click matching option
+            val_xpath = _build_xpath_contains(value)
+            clicked = False
+            for xpath in (
+                f"//li[contains(@class,'select2-results__option') and normalize-space(text())={val_xpath}]",
+                f"//li[contains(@class,'select2-results__option') and contains(text(),{val_xpath})]",
+            ):
+                try:
+                    opt = WebDriverWait(driver, 2).until(
+                        EC.element_to_be_clickable((By.XPATH, xpath))
+                    )
+                    opt.click()
+                    time.sleep(0.15)
+                    clicked = True
+                    selected_count += 1
+                    _log(f'  [{field_name}] ✓ {value}')
+                    break
+                except Exception:
+                    pass
+
+            if not clicked:
+                # Keyboard fallback
+                try:
+                    ActionChains(driver).send_keys(Keys.ARROW_DOWN).perform()
+                    time.sleep(0.1)
+                    ActionChains(driver).send_keys(Keys.ENTER).perform()
+                    time.sleep(0.1)
+                    selected_count += 1
+                    _log(f'  [{field_name}] ✓ {value} (keyboard fallback)')
+                except Exception:
+                    _log(f'  [{field_name}] ✗ Could not select: {value}', 'WARN')
+
+        # Step 6: Close dropdown cleanly
+        _close_dropdown()
+
+        _log(f'[{field_name}] Done: {selected_count}/{len(values)} selected')
+        return selected_count > 0
+
+    except Exception as e:
+        _log(f'[{field_name}] _atomic_multi_select error: {e}', 'ERROR')
+        try:
+            ActionChains(driver).send_keys(Keys.ESCAPE).perform()
+        except Exception:
+            pass
+        return False
+
+
 # ── Session management ────────────────────────────────────────────────────────
 
 def ensure_mis_ready(driver: Any, username: str = '', password: str = '') -> bool:
@@ -492,15 +678,15 @@ def fill_deal_form(driver: Any, payload: dict) -> dict:
             _fill_date(driver, 'end_date', end_date, 'End Date')
 
         if weekday:
-            # Weekday is a Select2 multi-select
-            for day in [d.strip() for d in weekday.split(',')]:
-                _select2_pick(driver, 'Day of Week', day, f'Weekday({day})')
+            # Weekday is a multi-select — use atomic open-once-click-all pattern
+            _atomic_multi_select(driver, 'Day of Week', weekday, 'Weekday')
 
         if locations:
             _select_stores(driver, locations)
 
         if categories:
-            _select2_pick(driver, 'Category', categories, 'Category')
+            # Category is a multi-select — use atomic open-once-click-all pattern
+            _atomic_multi_select(driver, 'Category', categories, 'Category')
 
         _log('✅ All fields filled. Modal open for user review.')
         session.set_automation_in_progress(False)
