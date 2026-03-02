@@ -85,7 +85,7 @@ def load_credentials() -> dict:
     handle = session.get_active_handle()
     return load_profile_credentials(handle) if handle else {}
 
-def inject_mis_validation(driver, expected_data=None) -> None:
+def inject_mis_validation(driver, expected_data=None, brand_aw_set=None) -> None:
     """
     v12.11 - Comprehensive Banner: Inject MIS validation JavaScript.
 
@@ -119,7 +119,7 @@ def inject_mis_validation(driver, expected_data=None) -> None:
             }
     """
     import json
-    expected_json = json.dumps(expected_data) if expected_data else 'null'
+    expected_json  = json.dumps(expected_data) if expected_data else 'null'
 
     # V2 ARCHITECTURE: Check if validator already active, just send message instead of re-injecting
     try:
@@ -198,6 +198,31 @@ def inject_mis_validation(driver, expected_data=None) -> None:
             endDateId: 'date_end'
         }};
 
+        // v12.28: Brand→AW set loaded from the same /api/get-settings-dropdowns
+        // call that already populates settingsCache in the Flask UI.
+        // Fetched once on first modal open; retried if the fetch fails.
+        let BRAND_AW_SET = new Set();
+        let _brandAwLoaded = false;
+        const _FLASK_BASE = 'http://127.0.0.1:{os.environ.get("FLASK_PORT", "5000")}';
+
+        async function loadBrandAwSet() {{
+            if (_brandAwLoaded) return;
+            _brandAwLoaded = true;
+            try {{
+                const resp = await fetch(`${{_FLASK_BASE}}/api/get-settings-dropdowns`);
+                if (resp.ok) {{
+                    const data = await resp.json();
+                    if (data.success && Array.isArray(data.brand_aw_list)) {{
+                        BRAND_AW_SET = new Set(data.brand_aw_list.map(b => b.toLowerCase()));
+                        console.log('[V2-AW] Loaded', BRAND_AW_SET.size, 'brands requiring AW:', [...BRAND_AW_SET]);
+                    }}
+                }}
+            }} catch(e) {{
+                console.warn('[V2-AW] Could not load brand-aw-settings:', e);
+                _brandAwLoaded = false; // allow retry on next modal open
+            }}
+        }}
+
         let EXPECTED_DATA = {expected_json};
         let VALIDATION_MODE = EXPECTED_DATA ? 'automation' : 'manual';
 
@@ -205,6 +230,8 @@ def inject_mis_validation(driver, expected_data=None) -> None:
             modalOpen: false,
             rebateTypeValid: false,
             weekdayValid: false,
+            afterWholesaleBrandValid: true,
+            awBrandAlertBrand: null,
             fieldWarnings: {{}},
             criticalErrors: {{}},
             saveButtonHidden: false,
@@ -265,6 +292,8 @@ def inject_mis_validation(driver, expected_data=None) -> None:
             validationState.criticalErrors = {{}};
             validationState.rebateTypeValid = false;
             validationState.weekdayValid = false;
+            validationState.afterWholesaleBrandValid = true;
+            validationState.awBrandAlertBrand = null;
             removeAllRedBoxes();
             removeAllOrangeBoxes();
             removeSummaryBanner();
@@ -528,9 +557,24 @@ def inject_mis_validation(driver, expected_data=None) -> None:
                 field.style.border = '';
             }}
         }}
+        function addRedBoxAW() {{
+            const cb = document.getElementById(CONFIG.afterWholesaleId);
+            if (!cb) return;
+            const row = cb.closest('.input-row, .form-group, .row, td, label') || cb.parentElement;
+            if (row) {{ row.style.border = '3px solid #dc3545'; row.style.boxShadow = '0 0 10px rgba(220,53,69,0.5)'; row.style.borderRadius = '4px'; }}
+            else {{ cb.style.outline = '3px solid #dc3545'; }}
+        }}
+        function removeRedBoxAW() {{
+            const cb = document.getElementById(CONFIG.afterWholesaleId);
+            if (!cb) return;
+            const row = cb.closest('.input-row, .form-group, .row, td, label') || cb.parentElement;
+            if (row) {{ row.style.border = ''; row.style.boxShadow = ''; row.style.borderRadius = ''; }}
+            else {{ cb.style.outline = ''; }}
+        }}
         function removeAllRedBoxes() {{
             removeRedBox(CONFIG.rebateTypeId);
             removeRedBox(CONFIG.weekdayId);
+            removeRedBoxAW();
         }}
 
         // ORANGE box helpers
@@ -592,7 +636,14 @@ def inject_mis_validation(driver, expected_data=None) -> None:
             const errorBox = document.createElement('div');
             errorBox.id = 'mis-validation-error-box';
             errorBox.style.cssText = 'background:#dc3545;color:white;padding:10px 15px;border-radius:4px;margin-bottom:10px;font-weight:bold;text-align:center;';
-            errorBox.innerHTML = '❌ CRITICAL ERROR - Cannot Save<br><small style="font-weight:normal;">⚠️ Rebate Type must be selected AND Weekday must be set</small>';
+            // Build dynamic error message based on which critical issues are present
+            const critMessages = [];
+            if (!validationState.rebateTypeValid) critMessages.push('Rebate Type must be selected');
+            if (!validationState.weekdayValid) critMessages.push('Weekday must be set');
+            if (!validationState.afterWholesaleBrandValid && validationState.awBrandAlertBrand)
+                critMessages.push(`Detected Brand: ${{validationState.awBrandAlertBrand}} — Must be Rebate After Wholesale!`);
+            const critDetail = critMessages.length > 0 ? critMessages.join(' · ') : 'Fix required fields above';
+            errorBox.innerHTML = `❌ CRITICAL ERROR - Cannot Save<br><small style="font-weight:normal;">⚠️ ${{critDetail}}</small>`;
             saveBtn.parentNode.insertBefore(errorBox, saveBtn);
             validationState.errorBox = errorBox;
             validationState.saveButtonHidden = true;
@@ -620,7 +671,7 @@ def inject_mis_validation(driver, expected_data=None) -> None:
 
         // Compare to Google Sheet button
         let listeningMode = false, notFoundMode = false, datatableClickHandler = null;
-        const FLASK_BACKEND = 'http://127.0.0.1:5000';
+        const FLASK_BACKEND = 'http://127.0.0.1:{os.environ.get("FLASK_PORT", "5000")}';
 
         function createCompareButton() {{
             if (validationState.compareButton) return;
@@ -727,7 +778,14 @@ def inject_mis_validation(driver, expected_data=None) -> None:
             }} else {{
                 const plural = total > 1 ? 's' : '';
                 const header = criticalCount > 0 ? `❌ ${{total}} Issue${{plural}} Found (${{criticalCount}} blocking save)` : `⚠️ ${{total}} Field${{plural}} May Need Review`;
-                banner.innerHTML = `<div style="text-align:center;">${{header}}</div><div style="font-weight:normal;text-align:center;font-size:0.85em;">See Deal Entry Checklist for details 👇</div>`;
+                // v12.28: Show prominent brand→AW alert when applicable
+                const awAlert = (criticalErrors || {{}}).afterWholesaleBrand;
+                const awAlertHtml = awAlert
+                    ? `<div style="background:rgba(255,255,255,0.15);border-radius:4px;padding:6px 8px;margin-top:6px;font-size:0.9em;font-weight:bold;">
+                           🔒 ${{awAlert.message}}
+                       </div>`
+                    : '';
+                banner.innerHTML = `<div style="text-align:center;">${{header}}</div><div style="font-weight:normal;text-align:center;font-size:0.85em;">See Deal Entry Checklist for details 👇</div>${{awAlertHtml}}`;
             }}
             if (otherEntries && otherEntries.length > 0) {{
                 const extra = document.createElement('div');
@@ -750,11 +808,14 @@ def inject_mis_validation(driver, expected_data=None) -> None:
                 if (modalOpen) {{
                     createForceButton(); createCompareButton();
                     attachSaveButtonListener(); attachCancelButtonListener();
+                    loadBrandAwSet(); // v12.28: fetch brand→AW list via existing settings endpoint
                 }} else {{
                     removeForceButton(); removeCompareButton(); removeSummaryBanner();
                     validationState.saveButtonHidden = false;
                     validationState.rebateTypeValid = false;
                     validationState.weekdayValid = false;
+                    validationState.afterWholesaleBrandValid = true;
+                    validationState.awBrandAlertBrand = null;
                     validationState.fieldWarnings = {{}};
                 }}
             }}
@@ -773,13 +834,39 @@ def inject_mis_validation(driver, expected_data=None) -> None:
                 validationState.weekdayValid = weekdayValid;
                 weekdayValid ? removeRedBox(CONFIG.weekdayId) : addRedBox(CONFIG.weekdayId);
             }}
-            if (rebateChanged || weekdayChanged) {{
-                (rebateValid && weekdayValid) ? showSaveButton() : hideSaveButton();
+
+            // ── Brand → After Wholesale critical check (v12.28) ──────────────────────
+            // If a brand in BRAND_AW_SET is selected but After Wholesale toggle is OFF, block save.
+            const currentBrand = getBrandValue();
+            const brandKey = currentBrand ? currentBrand.toLowerCase().trim() : '';
+            const brandRequiresAW = brandKey.length > 0
+                && brandKey !== '- select -'
+                && BRAND_AW_SET.size > 0
+                && BRAND_AW_SET.has(brandKey);
+            const afterWholesaleOn = getAfterWholesaleValue();
+            const awBrandValid = !brandRequiresAW || afterWholesaleOn;
+            const awBrandChanged = awBrandValid !== validationState.afterWholesaleBrandValid
+                || (awBrandValid === false && currentBrand !== validationState.awBrandAlertBrand);
+
+            if (awBrandChanged) {{
+                validationState.afterWholesaleBrandValid = awBrandValid;
+                validationState.awBrandAlertBrand = awBrandValid ? null : currentBrand;
+                awBrandValid ? removeRedBoxAW() : addRedBoxAW();
+            }}
+
+            if (rebateChanged || weekdayChanged || awBrandChanged) {{
+                (rebateValid && weekdayValid && awBrandValid) ? showSaveButton() : hideSaveButton();
             }}
 
             const criticalErrors = {{}};
             if (!rebateValid) criticalErrors.rebateType = {{ message: 'Must be selected' }};
             if (!weekdayValid) criticalErrors.weekday = {{ message: 'Must have at least one day' }};
+            if (!awBrandValid && currentBrand) {{
+                criticalErrors.afterWholesaleBrand = {{
+                    message: `Detected Brand: ${{currentBrand}} — Must be Rebate After Wholesale!`,
+                    brand: currentBrand
+                }};
+            }}
 
             const warnings = validateAllFields();
             const warningsChanged = JSON.stringify(warnings) !== JSON.stringify(validationState.fieldWarnings);
@@ -1190,17 +1277,22 @@ def inject_checklist_banner(driver, expected_data: dict, mode: str = 'create') -
         validateAllFields();
         interceptSaveButton();
 
+        // Auto-dismiss after 10 minutes or when banner is manually closed.
+        // Do NOT auto-dismiss based on modal selectors — the MIS system does not
+        // use Bootstrap .modal.show classes, so that check always fires false and
+        // destroys the banner 500ms after injection.
         const validationInterval = setInterval(() => {{
             if (!document.getElementById('checklist-banner-v18')) {{
-                clearInterval(validationInterval); return;
-            }}
-            if (!document.querySelector('.modal.show, .modal[style*="display: block"]')) {{
-                document.getElementById('checklist-banner-v18')?.remove();
                 clearInterval(validationInterval); return;
             }}
             validateAllFields();
             interceptSaveButton();
         }}, 500);
+
+        // Hard stop after 10 minutes
+        setTimeout(() => {{
+            clearInterval(validationInterval);
+        }}, 600000);
 
         console.log('[CHECKLIST v12.19] Banner injected. Mode:', MODE, 'Expected:', EXPECTED);
     }})();

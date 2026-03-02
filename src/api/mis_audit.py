@@ -655,7 +655,12 @@ def compare_to_sheet():
 
         if not matching_rows:
             print(f"[COMPARE-TO-SHEET] MIS ID {mis_id} not found — switching to manual mode")
-            inject_mis_validation(driver, expected_data=None)
+            try:
+                from src.api.mis_automation import _build_brand_aw_set as _baws
+                _aw = _baws()
+            except Exception:
+                _aw = set()
+            inject_mis_validation(driver, expected_data=None, brand_aw_set=_aw)
             return jsonify({
                 'success': True,
                 'mode': 'manual',

@@ -20,6 +20,119 @@ bp = Blueprint('mis_automation', __name__)
 
 # ── System ────────────────────────────────────────────────────────────────────
 
+
+# ── Brand → After Wholesale set helper (v12.28) ───────────────────────────────
+
+def _build_brand_aw_set() -> list[str]:
+    """
+    v12.28 (corrected): Return sorted list of lowercase brand names that
+    require the After Wholesale toggle ON.
+
+    Reads directly from the Brand Rebate Agreements tab (Settings tab as
+    fallback) — independent of whether the matcher has been run.
+    Returns empty list on any error so the validation degrades gracefully.
+
+    Column detection (case-insensitive, scans first 10 rows for header):
+      Brand col : contains 'brand', NOT 'linked', NOT 'contribution'
+      AW flag   : contains 'after' AND 'wholesale'
+    """
+    try:
+        from src.integrations.google_sheets import authenticate_google_sheets
+
+        service = authenticate_google_sheets()
+        if not service:
+            print("[BRAND-AW-SET] No sheets service — skipping")
+            return []
+
+        spreadsheet_id = session.get_spreadsheet_id()
+        if not spreadsheet_id:
+            print("[BRAND-AW-SET] No spreadsheet_id in session — skipping")
+            return []
+
+        # ── Find the right tab ────────────────────────────────────────────────
+        metadata = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+        tab_name: str | None = None
+        for s in metadata.get('sheets', []):
+            t = s['properties']['title']
+            if 'brand rebate' in t.lower() or 'rebate agreement' in t.lower():
+                tab_name = t
+                break
+        if not tab_name:
+            for s in metadata.get('sheets', []):
+                t = s['properties']['title']
+                if 'setting' in t.lower():
+                    tab_name = t
+                    break
+        if not tab_name:
+            print("[BRAND-AW-SET] No Brand Rebate Agreements or Settings tab found")
+            return []
+
+        print(f"[BRAND-AW-SET] Reading tab: '{tab_name}'")
+
+        rows = service.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id,
+            range=f"'{tab_name}'!A1:Z1000"
+        ).execute().get('values', [])
+        if not rows:
+            return []
+
+        # ── Detect header row ─────────────────────────────────────────────────
+        header: list[str] = []
+        header_row_idx = -1
+        for i, row in enumerate(rows[:10]):
+            rl = [str(c).strip().lower() for c in row]
+            has_brand = any('brand' in c and 'linked' not in c and 'contribution' not in c for c in rl)
+            has_aw    = any('after' in c and 'wholesale' in c for c in rl)
+            if has_brand and has_aw:
+                header = rl
+                header_row_idx = i
+                break
+
+        if header_row_idx == -1:
+            print("[BRAND-AW-SET] Header with brand + after-wholesale columns not found")
+            return []
+
+        brand_idx = next(
+            (ci for ci, h in enumerate(header)
+             if 'brand' in h and 'linked' not in h and 'contribution' not in h),
+            -1
+        )
+        aw_idx = next(
+            (ci for ci, h in enumerate(header) if 'after' in h and 'wholesale' in h),
+            -1
+        )
+
+        if brand_idx == -1 or aw_idx == -1:
+            print(f"[BRAND-AW-SET] Columns not found — brand_idx={brand_idx}, aw_idx={aw_idx}")
+            return []
+
+        print(f"[BRAND-AW-SET] Cols: brand='{header[brand_idx]}', aw='{header[aw_idx]}'")
+
+        brands: set = set()
+        for row in rows[header_row_idx + 1:]:
+            if len(row) <= brand_idx:
+                continue
+            brand_val = str(row[brand_idx]).strip()
+            if not brand_val:
+                continue
+            aw_raw = str(row[aw_idx]).strip().upper() if len(row) > aw_idx else ''
+            if aw_raw in ('TRUE', 'YES', '1', 'X', '✔', 'CHECKED'):
+                for b in brand_val.split(','):
+                    b = b.strip()
+                    if b:
+                        brands.add(b.lower())
+
+        result = sorted(brands)
+        print(f"[BRAND-AW-SET] {len(result)} brands require after_wholesale: {result}")
+        return result
+
+    except Exception as e:
+        print(f"[BRAND-AW-SET] Error: {e}")
+        import traceback as _tb
+        _tb.print_exc()
+        return []
+
+
 @bp.route('/api/restart', methods=['POST'])
 def restart():
     """Hard restart via os.execv."""
@@ -56,11 +169,15 @@ def get_settings_dropdowns():
             return jsonify({'success': False, 'error': 'Sheets service not authenticated.'})
 
         data = load_settings_dropdown_data(spreadsheet_id, service)
+        # v12.28: Also build brand→AW set and include in response so the
+        # injected MIS validator JS can reuse this single call.
+        brand_aw_list = _build_brand_aw_set()
         return jsonify({
-            'success':         True,
-            'stores':          data.get('stores', []),
-            'categories':      data.get('categories', []),
+            'success':          True,
+            'stores':           data.get('stores', []),
+            'categories':       data.get('categories', []),
             'brand_linked_map': data.get('brand_linked_map', {}),
+            'brand_aw_list':    brand_aw_list,
         })
     except Exception as e:
         traceback.print_exc()
@@ -249,7 +366,8 @@ def inject_validation():
             if 'mymis.net' in driver.current_url or 'mis' in driver.current_url.lower():
                 break
 
-        inject_mis_validation(driver, expected_data=None)
+        brand_aw = _build_brand_aw_set()
+        inject_mis_validation(driver, expected_data=None, brand_aw_set=brand_aw)
         return jsonify({'success': True, 'message': 'Validation system injected. Modal monitoring active.'})
 
     except Exception as e:
@@ -397,9 +515,11 @@ def lookup_mis_id():
                 except Exception as e:
                     print(f"[MIS LOOKUP] Could not inject checklist: {e}")
                     traceback.print_exc()
-                    inject_mis_validation(driver, expected_data=None)
+                    brand_aw = _build_brand_aw_set()
+                    inject_mis_validation(driver, expected_data=None, brand_aw_set=brand_aw)
             else:
-                inject_mis_validation(driver, expected_data=None)
+                brand_aw = _build_brand_aw_set()
+                inject_mis_validation(driver, expected_data=None, brand_aw_set=brand_aw)
                 print(f"[MIS LOOKUP] Manual mode — no expected data available")
 
             session.set('automation_in_progress', False)
