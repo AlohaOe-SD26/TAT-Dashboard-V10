@@ -334,99 +334,246 @@ def scrape_blaze_data_from_browser():
             print(f"[WARN] Log sniff error: {e}")
         return None
 
-    # --- HELPER: DEDICATED HEADLESS SNIFF CHROME ---
-    def sniff_token_via_dedicated_chrome() -> str | None:
+    # --- HELPER: SNIFF TOKEN VIA BACKGROUND TAB (mirrors monolith STEP 2 exactly) ---
+    def sniff_token_via_existing_driver() -> str | None:
         """
-        Spawn a temporary headless Chrome with goog:loggingPrefs enabled.
-        Attached sessions cannot have performance logging — so we need a separate
-        process. Runs invisible (--headless=new). Never touches the user's session.
+        Mirrors monolith lines 1688-1736 (background tab + smart-collections redirect),
+        extended with XHR/fetch interception for CDP-attached sessions that lack
+        performance logging.
+
+        KEY ORDERING RULE: open tab → switch → THEN inject CDP interceptor.
+        Page.addScriptToEvaluateOnNewDocument applies to the ACTIVE CDP target.
+        Calling it before switch_to registers it on the wrong tab.
         """
-        tmp_driver = None
+        interceptor_js = """
+            window._capturedBlazeToken = null;
+            (function() {
+                function extractToken(auth) {
+                    if (typeof auth === 'string' && auth.indexOf('Token ') === 0) {
+                        window._capturedBlazeToken = auth.replace('Token ', '').trim();
+                    }
+                }
+                var origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+                XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
+                    if (typeof name === 'string' && name.toLowerCase() === 'authorization') {
+                        extractToken(value);
+                    }
+                    return origSetHeader.apply(this, arguments);
+                };
+                var origFetch = window.fetch;
+                window.fetch = function(input, init) {
+                    try {
+                        var h = (init && init.headers) || {};
+                        var auth = '';
+                        if (typeof h.get === 'function') {
+                            auth = h.get('Authorization') || h.get('authorization') || '';
+                        } else {
+                            auth = h['Authorization'] || h['authorization'] || '';
+                        }
+                        extractToken(auth);
+                    } catch(e) {}
+                    return origFetch.apply(this, arguments);
+                };
+            })();
+        """
+
+        original_handle = None
+        cdp_script_id = None
+
         try:
-            from src.automation.browser import _get_chrome_profile_dir
-            sniff_opts = webdriver.ChromeOptions()
-            sniff_opts.add_argument(f'user-data-dir={_get_chrome_profile_dir()}')
-            sniff_opts.add_argument('profile-directory=Default')
-            sniff_opts.add_argument('--headless=new')
-            sniff_opts.add_argument('--no-sandbox')
-            sniff_opts.add_argument('--disable-dev-shm-usage')
-            sniff_opts.add_argument('--disable-blink-features=AutomationControlled')
-            sniff_opts.add_argument('--log-level=3')
-            sniff_opts.add_experimental_option('excludeSwitches', ['enable-automation', 'enable-logging'])
-            sniff_opts.add_experimental_option('useAutomationExtension', False)
-            sniff_opts.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
-            print('[TOKEN] Launching dedicated sniff Chrome...')
-            tmp_driver = webdriver.Chrome(options=sniff_opts)
-            tmp_driver.get('https://retail.blaze.me/company-promotions/smart-collections')
-            time.sleep(6)
-            logs = tmp_driver.get_log('performance')
-            for entry in logs:
+            # ── STEP A: SAVE CURRENT TAB ─────────────────────────────────────
+            try:
+                original_handle = driver.current_window_handle
+            except Exception:
+                original_handle = driver.window_handles[0]
+
+            # ── STEP B: OPEN NEW TAB & SWITCH ────────────────────────────────
+            # Use Selenium 4's switch_to.new_window first; fall back to JS open.
+            print("[NAV] Opening background tab to sniff...")
+            try:
+                driver.switch_to.new_window('tab')
+            except Exception:
+                driver.execute_script("window.open('about:blank', '_blank');")
+                time.sleep(0.4)
+                driver.switch_to.window(driver.window_handles[-1])
+
+            new_handle = driver.current_window_handle
+            print(f"[NAV] Background tab opened: {new_handle}")
+
+            # ── STEP C: INJECT INTERCEPTOR (NOW on the new tab's CDP target) ─
+            try:
+                result = driver.execute_cdp_cmd(
+                    'Page.addScriptToEvaluateOnNewDocument',
+                    {'source': interceptor_js}
+                )
+                cdp_script_id = result.get('identifier')
+                print(f'[TOKEN] CDP interceptor registered (id={cdp_script_id})')
+            except Exception as cdp_err:
+                print(f'[TOKEN] CDP inject failed: {cdp_err}')
+
+            # ── STEP D: NAVIGATE (monolith pattern) ──────────────────────────
+            print("[NAV] Redirecting to Smart Collections page (Background)...")
+            driver.get("https://retail.blaze.me/company-promotions/smart-collections")
+
+            # Wait for SPA to settle — prefer element-based wait, fall back to sleep
+            try:
+                from selenium.webdriver.support.ui import WebDriverWait as _WDW
+                from selenium.webdriver.support import expected_conditions as _EC
+                from selenium.webdriver.common.by import By as _By
+                # Wait until the page body is present (SPA bootstrapped)
+                _WDW(driver, 12).until(_EC.presence_of_element_located((_By.TAG_NAME, 'body')))
+                # Extra 3 s for the SPA to fire its API calls
+                time.sleep(3)
+            except Exception:
+                time.sleep(8)
+
+            # ── STEP E: READ TOKEN — three fallback layers ───────────────────
+            token = None
+
+            # Layer 1: XHR/fetch interceptor — poll 8 × 0.5 s = 4 s total
+            print("[TOKEN] Polling XHR/fetch interceptor...")
+            for attempt in range(8):
                 try:
-                    msg = json.loads(entry['message']).get('message', {})
-                    if msg.get('method') == 'Network.requestWillBeSent':
-                        req = msg['params']['request']
-                        if 'api.blaze.me' in req.get('url', '') and 'smartcollections' in req.get('url', ''):
-                            auth = next((v for k, v in req.get('headers', {}).items()
-                                         if k.lower() == 'authorization'), None)
-                            if auth and 'Token' in auth:
-                                return auth.replace('Token ', '').strip()
-                except Exception:
-                    continue
-        except Exception as e:
-            print(f'[WARN] Dedicated sniff Chrome error: {e}')
-        finally:
-            if tmp_driver:
-                try:
-                    tmp_driver.quit()
-                    print('[TOKEN] Sniff Chrome closed.')
+                    t = driver.execute_script("return window._capturedBlazeToken;")
+                    if t:
+                        token = t
+                        print(f"[TOKEN] Captured via interceptor (poll {attempt + 1})")
+                        break
                 except Exception:
                     pass
-        return None
+                time.sleep(0.5)
+
+            # Layer 2: Performance log sniff (works on non-attached sessions)
+            if not token:
+                token = sniff_token_from_logs('smartcollections')
+                if token:
+                    print("[TOKEN] Captured via performance log sniff")
+
+            # Layer 3: Full storage + cookie dump (diagnostic + extraction)
+            if not token:
+                try:
+                    dump = driver.execute_script("""
+                        var r = { ls: {}, ss: {}, cookies: document.cookie };
+                        for (var i = 0; i < localStorage.length; i++) {
+                            var k = localStorage.key(i);
+                            r.ls[k] = localStorage.getItem(k).substring(0, 150);
+                        }
+                        for (var j = 0; j < sessionStorage.length; j++) {
+                            var k2 = sessionStorage.key(j);
+                            r.ss[k2] = sessionStorage.getItem(k2).substring(0, 150);
+                        }
+                        return r;
+                    """)
+                    if dump:
+                        ls = dump.get('ls', {})
+                        ss = dump.get('ss', {})
+                        print(f"[TOKEN-DIAG] localStorage  ({len(ls)} keys): {list(ls.keys())}")
+                        print(f"[TOKEN-DIAG] sessionStorage ({len(ss)} keys): {list(ss.keys())}")
+                        print(f"[TOKEN-DIAG] cookies: {str(dump.get('cookies', ''))[:300]}")
+                        for store in (ls, ss):
+                            for k, v in store.items():
+                                if not v:
+                                    continue
+                                # Bare token string (alphanumeric-ish, 30-200 chars, no JSON)
+                                if 30 <= len(v) <= 200 and not v.startswith('{') and not v.startswith('['):
+                                    token = v.strip()
+                                    print(f"[TOKEN] Extracted bare value from storage['{k}']")
+                                    break
+                                # JSON blob with a token field
+                                try:
+                                    p = json.loads(v)
+                                    for field in ('token', 'accessToken', 'authToken',
+                                                  'auth_token', 'bearerToken'):
+                                        if p.get(field):
+                                            token = str(p[field])
+                                            print(f"[TOKEN] Extracted from storage['{k}']['{field}']")
+                                            break
+                                except Exception:
+                                    pass
+                                if token:
+                                    break
+                            if token:
+                                break
+                except Exception as dump_err:
+                    print(f"[TOKEN-DIAG] Storage dump error: {dump_err}")
+
+            if token:
+                print("[TOKEN] Captured fresh Collections Token!")
+            else:
+                print("[WARN] Failed to capture token even after redirect. "
+                      "Check [TOKEN-DIAG] lines above for storage key names.")
+
+            return token
+
+        except Exception as e:
+            print(f"[ERROR] Background sniff failed: {e}")
+            traceback.print_exc()
+            return None
+
+        finally:
+            # ── STEP F: CLOSE TAB & RETURN (monolith pattern) ────────────────
+            print("[NAV] Closing background tab and returning...")
+            try:
+                if driver.current_window_handle != original_handle:
+                    driver.close()
+            except Exception:
+                pass
+            try:
+                if original_handle:
+                    driver.switch_to.window(original_handle)
+            except Exception:
+                print("[WARN] Could not switch back to original tab")
+            if cdp_script_id is not None:
+                try:
+                    driver.execute_cdp_cmd(
+                        'Page.removeScriptToEvaluateOnNewDocument',
+                        {'identifier': cdp_script_id}
+                    )
+                except Exception:
+                    pass
 
     # --- STEP 1: TEST EXISTING TOKEN ---
     current_token = load_stored_token() or session.get_blaze_token()
     shops, raw_promos = {}, []
-    colls = load_groups() # Load cache first
-    
+    colls = load_groups()  # Load cache first
+
     # Check if we already have a token that works for EVERYTHING
     if current_token:
         print(f"[TOKEN] Verifying current token...")
         shops, new_colls, raw_promos = get_api_data(current_token)
-        
+
         # Merge new groups into cache
-        if new_colls: 
+        if new_colls:
             colls.update(new_colls)
             save_groups(colls)
-        
-        # LOGIC UPDATE: Ensure we actually fetched groups if we have a token
-        # If new_colls is empty but we have cached groups, it implies the token 
-        # failed to fetch groups (Limited Scope). We should force a refresh.
+
+        # LOGIC UPDATE: Ensure we actually fetched groups if we have a token.
+        # If new_colls is empty but we have cached groups, the token has limited
+        # scope — force a re-scrape.
         groups_valid = False
         if new_colls and len(new_colls) > 0:
             groups_valid = True
         elif len(colls) == 0:
-            # If cache is empty and API is empty, allow it (maybe truly 0 groups)
-            groups_valid = True 
-        
+            # If cache is empty and API is empty, allow it (may truly be 0 groups)
+            groups_valid = True
+
         if groups_valid and len(raw_promos) > 0:
             print("[TOKEN] Current token is VALID for both Groups and Promos. No redirect needed.")
             session.set_blaze_token(current_token)
         else:
             print("[TOKEN] Token is PARTIAL or INVALID (Groups missing). Initiating re-scrape sequence...")
-            current_token = None # Trigger scrape
-            # We don't wipe 'colls' here so we preserve old names if scrape fails, 
-            # but we force the scrape to try and get new ones.
+            current_token = None  # Trigger sniff
 
-    # --- STEP 2: DEDICATED SNIFF CHROME (if token invalid/missing) ---
+    # --- STEP 2: TOKEN REFRESH via existing driver CDP injection ---
     if not current_token:
-        print("[NAV] Token invalid or missing. Launching dedicated sniff Chrome...")
-        collections_token = sniff_token_via_dedicated_chrome()
+        print("[NAV] Token invalid or missing. Sniffing via existing browser session...")
+        collections_token = sniff_token_via_existing_driver()
         if collections_token:
             print("[TOKEN] Captured fresh Collections Token!")
             current_token = collections_token
             save_stored_token(current_token)
         else:
-            print("[WARN] Failed to capture token from dedicated sniff Chrome.")
+            print("[WARN] Failed to capture token from existing driver.")
 
         if current_token:
             shops, new_colls, raw_promos = get_api_data(current_token)
@@ -904,10 +1051,17 @@ class BlazeTokenManager:
             WebDriverWait(driver, 15).until(
                 EC.presence_of_element_located((By.NAME, "email"))
             )
-            
-            # Login
-            driver.find_element(By.NAME, "email").send_keys(email)
-            driver.find_element(By.NAME, "password").send_keys(password + Keys.RETURN)
+
+            # Clear fields before typing — fields may be pre-filled
+            email_field = driver.find_element(By.NAME, "email")
+            email_field.send_keys(Keys.CONTROL + "a")
+            email_field.send_keys(Keys.DELETE)
+            email_field.send_keys(email)
+
+            password_field = driver.find_element(By.NAME, "password")
+            password_field.send_keys(Keys.CONTROL + "a")
+            password_field.send_keys(Keys.DELETE)
+            password_field.send_keys(password + Keys.RETURN)
             
             time.sleep(5)  # Wait for login to complete
             

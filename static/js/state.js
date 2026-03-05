@@ -8,6 +8,39 @@ let matchesData = [];
 let misData = { tabName: '', csvFile: null, csvFilename: '', allLoadedTabs: [], localPath: null };
 let blazeData = { rawData: [], filteredData: [], table: null };
 
+// v12.1: Blaze modal state (used by blaze.js promo library modal)
+let blazeModalData = {
+    rowIdx: null,
+    allPromotions: [],
+    selectedTitles: [],
+    notFoundTitles: [],
+    filterType: 'all',
+    alternateBrands: []
+};
+
+// v12.25.6: Draft selection state (used by blaze.js batch automation)
+let draftSelectionState = {
+    isActive: false,
+    selectedDealIds: new Set(),
+    isAutomating: false,
+    shouldStop: false,
+    currentIndex: 0,
+    draftedDeals: [],
+    totalToDraft: 0
+};
+
+// v12.25: Zombie cleanup state (used by blaze.js zombie cleanup flow)
+let zombieCleanupState = {
+    isActive: false,
+    isManualMode: false,
+    zombieIds: [],
+    currentIndex: 0,
+    originalFilters: {
+        nameFilter: '',
+        subFilter: ''
+    }
+};
+
 // v12.17: Settings cache for Enhanced Create Popup
 let settingsCache = {
     stores: [],
@@ -52,7 +85,7 @@ async function loadSettingsDropdownData(forceRefresh = false) {
     return settingsCache;
 }
 
-const STRICT_OTD_STORES = ["Davis", "Dixon"];   
+const STRICT_OTD_STORES = ["Fresno (Palm)", "Fresno Shaw", "Riverside", "Davis", "Dixon"];
 const VALID_MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
 
 function switchMainTab(tabName, btnElement) {

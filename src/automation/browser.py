@@ -727,8 +727,15 @@ def robust_login(email: str, password: str) -> str | None:
             WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.NAME, "email"))
             )
-            driver.find_element(By.NAME, "email").send_keys(email)
-            driver.find_element(By.NAME, "password").send_keys(password + Keys.RETURN)
+            email_field = driver.find_element(By.NAME, "email")
+            email_field.send_keys(Keys.CONTROL + "a")
+            email_field.send_keys(Keys.DELETE)
+            email_field.send_keys(email)
+
+            password_field = driver.find_element(By.NAME, "password")
+            password_field.send_keys(Keys.CONTROL + "a")
+            password_field.send_keys(Keys.DELETE)
+            password_field.send_keys(password + Keys.RETURN)
         except Exception as e:
             print(f"[LOGIN] Selenium login form error: {e}")
             return None

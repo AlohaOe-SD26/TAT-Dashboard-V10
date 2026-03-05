@@ -736,3 +736,601 @@ function displayAuditResults(resultsObj) {
 // ============================================
 // SEARCH ENHANCEMENT: Click-to-Search
 // ============================================
+
+// ============================================
+// BLAZE TABLE RENDER + DATA FETCH
+// Extracted from monolith lines 18422–19950
+// These were missing from the modular blaze.js
+// ============================================
+
+async function renderBlazeTable(rows) {
+    // [CRITICAL] Store rows globally so buttons can access data by index
+    blazeData.currentRows = rows || [];
+
+    // 0. PRE-FETCH TAX RATES (Blocking) - Ensures Audit Logic has data
+    let TAX_RATES = {};
+    try {
+        const response = await fetch('/api/tax-rates');
+        const data = await response.json();
+        if (data.success) {
+            TAX_RATES = data.rates;
+        }
+    } catch (e) {
+        console.error("Failed to pre-fetch tax rates:", e);
+    }
+
+    // 1. CALCULATE GLOBAL TOTALS
+    let totActive = 0;
+    let totInactive = 0;
+    let totZombie = 0;
+
+    if (rows && Array.isArray(rows)) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        rows.forEach(r => {
+            const status = (r.Status || '').trim();
+            if (status === 'Active') totActive++;
+            else if (status === 'Inactive') totInactive++;
+
+            if (status === 'Active') {
+                const endDateStr = (r['End Date'] || '').trim();
+                if (endDateStr) {
+                    try {
+                        const parts = endDateStr.split('-');
+                        if (parts.length === 3) {
+                            const endDate = new Date(parts[0], parts[1] - 1, parts[2]);
+                            endDate.setHours(0, 0, 0, 0);
+                            if (endDate.getTime() < today.getTime()) {
+                                totZombie++;
+                            }
+                        }
+                    } catch (e) {}
+                }
+            }
+        });
+    }
+
+    document.getElementById('totalCount').innerText = (rows ? rows.length : 0) + " Total Promotions";
+    document.getElementById('totalActive').innerText = totActive + " Active";
+    document.getElementById('totalInactive').innerText = totInactive + " Inactive";
+    document.getElementById('totalZombie').innerText = " " + totZombie + " Zombie";
+
+    // Cleanup old table
+    if ($.fn.DataTable.isDataTable('#promotionsTable')) {
+        $('#promotionsTable').DataTable().destroy();
+    }
+
+    const tbody = document.querySelector('#promotionsTable tbody');
+    tbody.innerHTML = '';
+
+    const ALL_LOCATIONS_LIST = [
+        "Beverly Hills", "Davis", "Dixon", "El Sobrante", "Fresno (Palm)",
+        "Fresno Shaw", "Hawthorne", "Koreatown", "Laguna Woods",
+        "Oxnard", "Riverside", "West Hollywood"
+    ].sort();
+
+    if (rows && Array.isArray(rows)) {
+        rows.forEach((row, index) => {
+            const tr = document.createElement('tr');
+
+            // STATUS BADGE
+            const status = (row.Status || '').trim();
+            const statusBadge = status === 'Active'
+                ? '<span class="badge bg-success">Active</span>'
+                : '<span class="badge bg-danger">Inactive</span>';
+
+            // DAYS UNTIL END
+            const startDateStr = row['Start Date'] || '';
+            const endDateStr = row['End Date'] || '';
+            let daysDisplay = '-';
+            let isExpired = false;
+
+            if (endDateStr && endDateStr !== '') {
+                try {
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+
+                    const parseLocal = (dateStr) => {
+                        if (!dateStr) return null;
+                        const parts = dateStr.split('-');
+                        if (parts.length === 3) {
+                            const d = new Date(parts[0], parts[1] - 1, parts[2]);
+                            d.setHours(0, 0, 0, 0);
+                            return d;
+                        }
+                        const d = new Date(dateStr);
+                        d.setHours(0, 0, 0, 0);
+                        return d;
+                    };
+
+                    const endDate = parseLocal(endDateStr);
+                    const startDate = parseLocal(startDateStr);
+
+                    if (endDate) {
+                        if (startDate && startDate.getTime() > today.getTime()) {
+                            const startDiff = startDate.getTime() - today.getTime();
+                            const daysToStart = Math.round(startDiff / (1000 * 3600 * 24));
+                            const durationDiff = endDate.getTime() - startDate.getTime();
+                            const durationDays = Math.round(durationDiff / (1000 * 3600 * 24));
+                            daysDisplay = `<div style="line-height:1.2;">
+                                <span style="color:#0d6efd; font-weight:bold;">Starts in ${daysToStart} Day${daysToStart===1?'':'s'}</span><br>
+                                <span style="color:#6c757d; font-size:0.85em;">Runs for ${durationDays} Day${durationDays===1?'':'s'}</span>
+                            </div>`;
+                        } else {
+                            const diffTime = endDate.getTime() - today.getTime();
+                            const diffDays = Math.round(diffTime / (1000 * 3600 * 24));
+                            if (diffDays === 0) {
+                                daysDisplay = '<span style="color:#d63384; font-weight:bold;">Ends Today!</span>';
+                            } else if (diffDays > 0) {
+                                daysDisplay = `Ends in ${diffDays} Day${diffDays === 1 ? '' : 's'}`;
+                            } else {
+                                const absDays = Math.abs(diffDays);
+                                daysDisplay = `Ended ${absDays} Day${absDays === 1 ? '' : 's'} ago`;
+                                isExpired = true;
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error(e);
+                    daysDisplay = 'Invalid Date';
+                }
+            }
+
+            // ROW HIGHLIGHTING
+            const isExpiredAlt = daysDisplay.includes('Ended') && daysDisplay.includes('ago');
+            if (status === 'Active' && (isExpired || isExpiredAlt)) {
+                tr.style.backgroundColor = '#dc3545';
+                tr.style.color = '#ffffff';
+                tr.style.fontWeight = 'bold';
+                tr.style.border = '3px solid #a02030';
+            } else if (status === 'Inactive') {
+                tr.style.backgroundColor = '#f4cccc';
+            }
+            if (isExpiredAlt && !isExpired && status === 'Active') {
+                tr.style.color = '#dc3545';
+                tr.style.fontWeight = 'bold';
+            }
+
+            // ID BUTTON
+            const idButton = `<button onclick="navBlaze('promo', '${row.ID}'); return false;"
+                class="btn btn-sm btn-primary"
+                style="font-size: 0.75rem; padding: 2px 8px;"
+                title="ID: ${row.ID}">View Discount</button>`;
+
+            // LOCATIONS
+            let locationsRaw = row.Locations || '';
+            let locationsDisplay = '';
+            let applicableStores = [];
+
+            if (locationsRaw === 'All Locations') {
+                applicableStores = ALL_LOCATIONS_LIST;
+                const tooltipHTML = ALL_LOCATIONS_LIST.join('<br>');
+                locationsDisplay = `<span class="badge bg-info text-white" style="cursor:help;"
+                    data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="right"
+                    title="${tooltipHTML}">All Locations</span>`;
+            } else {
+                applicableStores = locationsRaw.split(',').map(l => l.trim()).filter(l => l);
+                let displayText = locationsRaw;
+                if (displayText.length > 50) displayText = displayText.substring(0, 47) + '...';
+                const locationsList = locationsRaw.split(',').map(l => l.trim()).filter(l => l).sort();
+                const tooltipHTML = locationsList.join('<br>');
+                locationsDisplay = `<span style="cursor:help; text-decoration:underline dotted;"
+                    data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="right"
+                    title="${tooltipHTML}">${displayText}</span>`;
+            }
+
+            // DETAIL BUTTON
+            const detailCell = `<button
+                class="btn btn-sm btn-outline-secondary py-0 px-2"
+                style="font-size:0.75rem; font-weight:bold;"
+                onmouseenter="showDetailModal(blazeData.currentRows[${index}], false)"
+                onmouseleave="hideDetailModal()"
+                onclick="toggleDetailPin(blazeData.currentRows[${index}]); event.stopPropagation();">
+                DETAIL</button>`;
+
+            // AUTO/MANUAL
+            const autoManualText = row.auto_apply ? 'Automatic' : 'Manual';
+            const autoManualColor = row.auto_apply ? '#0066ff' : '#ff8800';
+            const autoManualCell = `<span style="color:${autoManualColor}; font-weight:bold;">${autoManualText}</span>`;
+
+            // GROUP LINKS
+            const makeGroupLinks = (groups) => {
+                if (!groups || groups.length === 0) return '-';
+                const list = Array.isArray(groups) ? groups : [];
+                return list.map(g => {
+                    const displayName = g.name.length > 20 ? g.name.substring(0, 20) + '...' : g.name;
+                    return `<a href="#" onclick="navBlaze('coll', '${g.id}'); return false;"
+                        class="badge bg-light text-dark border"
+                        style="margin:1px; text-decoration:none; display:block; width:fit-content; margin-bottom:2px;"
+                        title="${g.name}">${displayName}</a>`;
+                }).join('');
+            };
+
+            // DISCOUNT VALUE WITH OTD AUDIT
+            let discountValueContent = row['Discount Value'];
+            const discType = row['Discount Value Type'] || '';
+            const isFinalPrice = discType.toLowerCase().includes('final');
+
+            if (isFinalPrice && discountValueContent && discountValueContent !== '-') {
+                let btnStyle = "color:#0d6efd; border:1px solid #0d6efd;";
+                let btnEmoji = "";
+                let targetOtd = null;
+
+                if (/BOGO|B2G1|B1G2/i.test(row.Name)) {
+                    const bracketMatch = row.Name.match(/\[\$([0-9.]+)\]/);
+                    if (bracketMatch) targetOtd = parseFloat(bracketMatch[1]);
+                } else {
+                    const bulkMatch = row.Name.match(/(\d+)\s+for\s+\$([0-9.]+)/i);
+                    if (bulkMatch) targetOtd = parseFloat(bulkMatch[2]);
+                }
+
+                if (targetOtd !== null && Object.keys(TAX_RATES).length > 0) {
+                    const discValue = parseFloat(String(discountValueContent).replace(/[^0-9.-]/g, ''));
+                    let worstState = 0;
+
+                    STRICT_OTD_STORES.forEach(strictStore => {
+                        const isApplicable = applicableStores.some(loc =>
+                            loc.includes(strictStore) || strictStore.includes(loc));
+                        if (isApplicable && TAX_RATES[strictStore]) {
+                            const rate = TAX_RATES[strictStore];
+                            const calculatedRounded = Math.round(discValue * rate * 100) / 100;
+                            const targetRounded = Math.round(targetOtd * 100) / 100;
+                            const diffCents = Math.round((calculatedRounded - targetRounded) * 100);
+                            let currentState = 0;
+                            if (diffCents === 0) currentState = 0;
+                            else if (diffCents === -1) currentState = 1;
+                            else if (diffCents === 1) currentState = 2;
+                            else currentState = 3;
+                            if (currentState > worstState) worstState = currentState;
+                        }
+                    });
+
+                    if (worstState === 3) { btnStyle = "color:#dc3545; border:1px solid #dc3545;"; btnEmoji = " ⚠️⚠️"; }
+                    else if (worstState === 2) { btnStyle = "color:#fd7e14; border:1px solid #fd7e14;"; btnEmoji = " ⚠️"; }
+                    else if (worstState === 1) { btnStyle = "color:#198754; border:1px solid #198754;"; btnEmoji = " ⚠️"; }
+                    else { btnStyle = "color:#198754; border:1px solid #198754;"; btnEmoji = " ✅"; }
+                }
+
+                discountValueContent = `<button class="btn btn-sm"
+                    style="font-weight:bold; padding:0px 6px; background:white; ${btnStyle}"
+                    onclick="showOtdModal(${index})">
+                    ${discountValueContent} ${btnEmoji}</button>`;
+            }
+
+            tr.innerHTML = `
+                ${draftSelectionState.isActive ? `<td class="draft-checkbox-cell"><input type="checkbox" class="draft-checkbox" data-promo-id="${row.ID}" ${draftSelectionState.selectedDealIds.has(String(row.ID)) ? 'checked' : ''} onchange="toggleDraftSelection('${row.ID}', this.checked)"></td>` : ''}
+                <td>${detailCell}</td>
+                <td>${idButton}</td>
+                <td>${row.Name}</td>
+                <td>${statusBadge}</td>
+                <td>${autoManualCell}</td>
+                <td>${locationsDisplay}</td>
+                <td>${makeGroupLinks(row.buy_groups)}</td>
+                <td>${makeGroupLinks(row.get_groups)}</td>
+                <td>${row['Discount Value Type']}</td>
+                <td>${discountValueContent}</td>
+                <td>${row['Start Date']}</td>
+                <td>${row['End Date']}</td>
+                <td><span style="font-size:0.85rem; font-style:italic;">${daysDisplay}</span></td>
+            `;
+            tr.setAttribute('data-promo-id', row.ID);
+            tbody.appendChild(tr);
+        });
+    }
+
+    // Add checkbox header for draft mode
+    if (draftSelectionState.isActive) {
+        const thead = document.querySelector('#promotionsTable thead tr');
+        const existingCheckboxHeader = thead.querySelector('.draft-checkbox-header-cell');
+        if (!existingCheckboxHeader) {
+            const th = document.createElement('th');
+            th.className = 'draft-checkbox-header-cell';
+            th.style.cssText = 'width: 30px !important; text-align: center;';
+            th.innerHTML = '<input type="checkbox" class="draft-checkbox-header" onclick="toggleSelectAllVisible(this)" title="Select all visible">';
+            thead.insertBefore(th, thead.firstChild);
+        }
+    } else {
+        const thead = document.querySelector('#promotionsTable thead tr');
+        const existingCheckboxHeader = thead.querySelector('.draft-checkbox-header-cell');
+        if (existingCheckboxHeader) existingCheckboxHeader.remove();
+    }
+
+    // Initialize DataTable
+    const table = $('#promotionsTable').DataTable({
+        paging: false,
+        scrollY: '60vh',
+        scrollCollapse: false,
+        dom: 't',
+        autoWidth: true,
+        deferRender: true
+    });
+
+    if (draftSelectionState.isActive) updateDraftSelectedCount();
+
+    const promoContent = document.getElementById('blaze-promo-content');
+    if (promoContent && promoContent.style.display !== 'none') {
+        setTimeout(function() { table.columns.adjust().draw(false); }, 50);
+    }
+
+    setTimeout(function() {
+        const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+        tooltipTriggerList.map(el => new bootstrap.Tooltip(el));
+    }, 300);
+
+    // HIDE INACTIVE TOGGLE
+    $.fn.dataTable.ext.search.push(function(settings, data, dataIndex) {
+        if (settings.nTable.id !== 'promotionsTable') return true;
+        const hideInactive = document.getElementById('hideInactiveToggle');
+        if (hideInactive && hideInactive.checked) {
+            const statusColIdx = getBlazeColumnIndex('status');
+            const statusValue = data[statusColIdx] ? data[statusColIdx].toString().toLowerCase() : '';
+            if (statusValue.includes('inactive')) return false;
+        }
+        return true;
+    });
+
+    document.getElementById('hideInactiveToggle').addEventListener('change', function() {
+        $('#promotionsTable').DataTable().draw();
+    });
+
+    // DYNAMIC FILTER COUNTER
+    table.on('draw', function() {
+        const filteredData = table.rows({ search: 'applied' }).data();
+        let filtActive = 0, filtInactive = 0, filtZombie = 0;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const statusColIdx = getBlazeColumnIndex('status');
+        const endColIdx = getBlazeColumnIndex('end');
+
+        filteredData.each(function(value) {
+            const statusHTML = String(value[statusColIdx] || '');
+            const endDateHTML = String(value[endColIdx] || '');
+            if (statusHTML.includes('Active')) {
+                filtActive++;
+                const dateMatch = endDateHTML.match(/\d{4}-\d{2}-\d{2}/);
+                if (dateMatch) {
+                    try {
+                        const endDate = new Date(dateMatch[0]);
+                        endDate.setHours(0, 0, 0, 0);
+                        if (endDate < today) filtZombie++;
+                    } catch (e) {}
+                }
+            } else if (statusHTML.includes('Inactive')) {
+                filtInactive++;
+            }
+        });
+
+        document.getElementById('filteredCount').innerText = filteredData.length + " Total";
+        document.getElementById('filteredActive').innerText = filtActive + " Active";
+        document.getElementById('filteredInactive').innerText = filtInactive + " Inactive";
+        document.getElementById('filteredZombie').innerText = " " + filtZombie + " Zombie";
+
+        if (draftSelectionState.isActive) updateDraftCheckboxes();
+
+        const nameFilter = document.getElementById('blazeNameSearch').value;
+        const subFilter = document.getElementById('blazeSubSearch').value;
+        const filteredGroup = document.getElementById('filteredStatsGroup');
+        const downloadFilteredBtn = document.getElementById('downloadFilteredBtn');
+        const hasActiveFilter = nameFilter.trim().length > 0 || subFilter.trim().length > 0;
+        if (hasActiveFilter) {
+            if (filteredGroup) filteredGroup.style.display = 'block';
+            if (downloadFilteredBtn) downloadFilteredBtn.style.display = 'block';
+        } else {
+            if (filteredGroup) filteredGroup.style.display = 'none';
+            if (downloadFilteredBtn) downloadFilteredBtn.style.display = 'none';
+        }
+    });
+
+    table.draw();
+
+    // PERSIST SEARCH STATE
+    const primaryVal = document.getElementById('blazeNameSearch').value;
+    const subVal = document.getElementById('blazeSubSearch').value;
+    const subContainer = document.getElementById('subSearchContainer');
+    if (primaryVal.trim().length > 0) {
+        subContainer.style.display = 'flex';
+        const nameColIndex = getBlazeColumnIndex('name');
+        table.column(nameColIndex).search(primaryVal);
+        table.search(subVal);
+        table.draw();
+    } else if (subVal.trim().length > 0) {
+        document.getElementById('blazeSubSearch').value = '';
+        subContainer.style.display = 'none';
+    }
+}
+
+// ============================================
+// FETCH + SYNC FUNCTIONS (monolith lines 19802–19950)
+// Uses raw fetch() — DO NOT convert to api.blaze.refresh()
+// The api wrapper returns parsed JSON; response.ok/.json() would be undefined
+// ============================================
+
+async function fetchBlazeData(isAuto = false) {
+    const btn = document.querySelector("button[onclick='fetchBlazeData()']");
+    const statusDiv = document.getElementById('blaze-sync-status');
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> ' + (isAuto ? 'Auto-Syncing...' : 'Syncing...');
+    }
+    if (isAuto && statusDiv) {
+        statusDiv.innerHTML = '<span class="text-muted">Checking Blaze Token...</span>';
+    }
+
+    try {
+        const response = await fetch('/api/blaze/refresh');
+        if (!response.ok) throw new Error("Server Error");
+        const data = await response.json();
+
+        if (data.success) {
+            renderBlazeTable(data.data);
+            lastUpdateTS = Date.now() / 1000;
+            if (isAuto) {
+                console.log("[AUTO] Sync successful.");
+                if (statusDiv) statusDiv.innerHTML = '<span class="text-success fw-bold">[OK] Connected</span>';
+            }
+        } else {
+            const errorMsg = data.message || "Unknown Error";
+            if (isAuto) {
+                console.log("[AUTO] Sync failed: " + errorMsg);
+                if (statusDiv) statusDiv.innerHTML = `<span class="text-danger fw-bold">[!] 🚨🚨🚨🚨 ${errorMsg}</span>`;
+            } else {
+                alert("Sync Failed: " + errorMsg);
+            }
+        }
+    } catch (e) {
+        if (!isAuto) alert('Sync Error: ' + e.message);
+        if (isAuto && statusDiv) statusDiv.innerHTML = `<span class="text-danger">Error: ${e.message}</span>`;
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refresh / Sync Data';
+        }
+    }
+}
+
+async function loadTableFromCache() {
+    try {
+        const response = await fetch('/api/blaze/get-cache');
+        if (!response.ok) return;
+        const data = await response.json();
+        if (data.success) {
+            console.log("Background update applied.");
+            renderBlazeTable(data.data);
+            lastUpdateTS = data.ts;
+        }
+    } catch (e) { console.log("Background load error:", e); }
+}
+
+// AUTO-REFRESH POLLING (monolith line 19867)
+let lastUpdateTS = Date.now() / 1000;
+setInterval(() => {
+    const invContent = document.getElementById('blaze-inv-content');
+    const isInventoryVisible = invContent && invContent.style.display !== 'none';
+    const isZombieCleanupActive = zombieCleanupState && zombieCleanupState.isActive && !zombieCleanupState.isManualMode;
+
+    if (typeof currentMainTab !== 'undefined' && currentMainTab === 'blaze' && !isInventoryVisible && !isZombieCleanupActive) {
+        fetch(`/api/blaze/poll-update?ts=${lastUpdateTS}`)
+            .then(r => r.json())
+            .then(data => { if (data.update) loadTableFromCache(); })
+            .catch(e => console.log("Poll error:", e));
+    }
+}, 2000);
+
+// AUTO-SYNC ON STARTUP (monolith line 19895)
+async function autoSyncBlazeData() {
+    console.log('[AUTO-SYNC] Checking for Blaze token...');
+    try {
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        const response = await fetch('/api/blaze/refresh');
+        const data = await response.json();
+
+        if (data.success) {
+            console.log('[AUTO-SYNC] Blaze data synced successfully on startup');
+            renderBlazeTable(data.data);
+            const statusDiv = document.getElementById('blaze-sync-status');
+            if (statusDiv) statusDiv.innerHTML = '<span class="text-success fw-bold">[OK] Auto-synced on startup</span>';
+        } else {
+            console.log('[AUTO-SYNC] Blaze sync skipped:', data.message || 'No token or error');
+        }
+    } catch (error) {
+        console.log('[AUTO-SYNC] Blaze auto-sync not available:', error.message);
+    }
+}
+
+
+// ============================================
+// BROWSER STATUS CHECKER (monolith line 19716)
+// ============================================
+async function checkBrowserStatus() {
+    try {
+        const response = await fetch('/api/browser-status');
+        const data = await response.json();
+
+        const statusDiv = document.getElementById('browser-ready-status');
+        const statusText = document.getElementById('browser-ready-text');
+
+        if (data.ready) {
+            if (statusDiv) statusDiv.className = 'alert alert-success';
+            if (statusDiv) statusDiv.style.display = 'block';
+            if (statusText) statusText.textContent = 'Ready!';
+            console.log("[STARTUP] Browser Ready. Auto-sync disabled - use manual sync.");
+        } else {
+            if (statusDiv) statusDiv.className = 'alert alert-info';
+            if (statusDiv) statusDiv.style.display = 'block';
+            if (statusText) statusText.textContent = 'Initializing...';
+            setTimeout(checkBrowserStatus, 1000);
+        }
+    } catch (error) {
+        setTimeout(checkBrowserStatus, 2000);
+    }
+}
+
+// ============================================
+// BLAZE COLUMN INDEX HELPER (monolith line 19761)
+// When draft mode is ON, checkbox col shifts all indices by 1
+// ============================================
+function getBlazeColumnIndex(columnName) {
+    const offset = draftSelectionState.isActive ? 1 : 0;
+    const baseIndices = {
+        'detail': 0,
+        'id': 1,
+        'name': 2,
+        'status': 3,
+        'autoManual': 4,
+        'locations': 5,
+        'buyGroups': 6,
+        'getGroups': 7,
+        'type': 8,
+        'value': 9,
+        'start': 10,
+        'end': 11,
+        'daysUntilEnd': 12
+    };
+    return (baseIndices[columnName] ?? 0) + offset;
+}
+
+// ============================================
+// BLAZE SEARCH FILTERS (monolith line 19745)
+// ============================================
+function handlePrimaryInput() {
+    const primaryVal = document.getElementById('blazeNameSearch').value;
+    const subContainer = document.getElementById('subSearchContainer');
+    const subInput = document.getElementById('blazeSubSearch');
+
+    if (primaryVal.trim().length > 0) {
+        subContainer.style.display = 'flex';
+    } else {
+        subContainer.style.display = 'none';
+        subInput.value = '';
+    }
+    applyBlazeFilters();
+}
+
+function applyBlazeFilters() {
+    if (!$.fn.DataTable.isDataTable('#promotionsTable')) return;
+
+    const table = $('#promotionsTable').DataTable();
+    const primaryVal = document.getElementById('blazeNameSearch').value;
+    const subVal = document.getElementById('blazeSubSearch').value;
+
+    const nameColIndex = getBlazeColumnIndex('name');
+    table.column(nameColIndex).search(primaryVal);
+    table.search(subVal);
+    table.draw();
+}
+
+// ============================================
+// PAGE LOAD BOOTSTRAP (monolith line 19885)
+// This wires up all startup functions exactly as the monolith does.
+// autoSyncBlazeData is called here — NOT from any other file.
+// ============================================
+window.addEventListener('load', function() {
+    checkBrowserStatus();
+    setupSearchEnhancements();
+    autoLoadCredentials();
+    autoAuthenticateGoogle();
+    loadMisReportsFolderPath();
+    autoSyncBlazeData();
+});
