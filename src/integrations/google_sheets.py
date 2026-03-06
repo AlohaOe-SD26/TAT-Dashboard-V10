@@ -42,12 +42,18 @@ _PROJECT_ROOT   = Path(__file__).resolve().parent.parent.parent
 TAX_CONFIG_FILE = _PROJECT_ROOT / 'tax_config.json'
 
 DEFAULT_TAX_RATES = {
-    'CA_base': 7.25,
-    'CA_cannabis_excise': 15.0,
-    'CA_cannabis_cultivation_flower': 10.08,
-    'CA_cannabis_cultivation_trim': 3.00,
-    'CA_cannabis_cultivation_fresh': 1.41,
-    'markup': 80.0,
+    "Beverly Hills": 1.402361,
+    "Davis": 1.3820125,
+    "Dixon": 1.3086281,
+    "El Sobrante": 1.33816875,
+    "Fresno (Palm)": 1.295866,
+    "Fresno Shaw": 1.295866,
+    "Hawthorne": 1.3342875,
+    "Koreatown": 1.402361,
+    "Laguna Woods": 1.3630375,
+    "Oxnard": 1.336783,
+    "Riverside": 1.30108125,
+    "West Hollywood": 1.36605625,
 }
 
 def configure_google_sheets_profile(token_file: str | None, credentials_file: str | None) -> None:

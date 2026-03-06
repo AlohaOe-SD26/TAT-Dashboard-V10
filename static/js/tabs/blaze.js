@@ -743,12 +743,27 @@ function displayAuditResults(resultsObj) {
 // These were missing from the modular blaze.js
 // ============================================
 
+// Price Check scope: false = Davis+Dixon only (default), true = all stores
+let priceCheckAll = false;
+// The restricted two-store audit set when priceCheckAll is OFF
+const DAVIS_DIXON_STORES = ["Davis", "Dixon"];
+
+function onPriceCheckAllChange() {
+    const toggle = document.getElementById('priceCheckAllToggle');
+    priceCheckAll = toggle ? toggle.checked : false;
+    console.log('[PRICE-CHECK] All stores:', priceCheckAll);
+    // Re-render table with current rows so value button colors update immediately
+    if (blazeData.currentRows && blazeData.currentRows.length > 0) {
+        renderBlazeTable(blazeData.currentRows);
+    }
+}
+
 async function renderBlazeTable(rows) {
     // [CRITICAL] Store rows globally so buttons can access data by index
     blazeData.currentRows = rows || [];
 
     // 0. PRE-FETCH TAX RATES (Blocking) - Ensures Audit Logic has data
-    let TAX_RATES = {};
+    TAX_RATES = {};  // assign to global from state.js — NOT let (would shadow the global)
     try {
         const response = await fetch('/api/tax-rates');
         const data = await response.json();
@@ -969,7 +984,9 @@ async function renderBlazeTable(rows) {
                     const discValue = parseFloat(String(discountValueContent).replace(/[^0-9.-]/g, ''));
                     let worstState = 0;
 
-                    STRICT_OTD_STORES.forEach(strictStore => {
+                    // When priceCheckAll is ON use every store; when OFF only Davis + Dixon
+                    const auditStores = priceCheckAll ? Object.keys(TAX_RATES) : DAVIS_DIXON_STORES;
+                    auditStores.forEach(strictStore => {
                         const isApplicable = applicableStores.some(loc =>
                             loc.includes(strictStore) || strictStore.includes(loc));
                         if (isApplicable && TAX_RATES[strictStore]) {
@@ -1057,22 +1074,6 @@ async function renderBlazeTable(rows) {
         const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
         tooltipTriggerList.map(el => new bootstrap.Tooltip(el));
     }, 300);
-
-    // HIDE INACTIVE TOGGLE
-    $.fn.dataTable.ext.search.push(function(settings, data, dataIndex) {
-        if (settings.nTable.id !== 'promotionsTable') return true;
-        const hideInactive = document.getElementById('hideInactiveToggle');
-        if (hideInactive && hideInactive.checked) {
-            const statusColIdx = getBlazeColumnIndex('status');
-            const statusValue = data[statusColIdx] ? data[statusColIdx].toString().toLowerCase() : '';
-            if (statusValue.includes('inactive')) return false;
-        }
-        return true;
-    });
-
-    document.getElementById('hideInactiveToggle').addEventListener('change', function() {
-        $('#promotionsTable').DataTable().draw();
-    });
 
     // DYNAMIC FILTER COUNTER
     table.on('draw', function() {
@@ -1333,4 +1334,1086 @@ window.addEventListener('load', function() {
     autoAuthenticateGoogle();
     loadMisReportsFolderPath();
     autoSyncBlazeData();
+    loadTaxRatesForEdit();
+    loadTaxRates();
+    initBlazeTableFilters();
+});
+
+
+// ============================================
+// navBlaze — navigate Blaze browser to promo or collection (monolith line 18268)
+// ============================================
+async function navBlaze(type, id) {
+    let url = '';
+    if (type === 'promo') url = `https://retail.blaze.me/company-promotions/promotions/${id}#setup`;
+    if (type === 'coll') url = `https://retail.blaze.me/company-promotions/smart-collections/${id}`;
+    await fetch('/api/blaze/navigate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+    });
+}
+
+// ============================================
+// showOtdModal — OTD price breakdown with audit (monolith line 18282)
+// ============================================
+function showOtdModal(rowIndex) {
+    const row = blazeData.currentRows[rowIndex];
+    if (!row) return;
+
+    const discountValueStr = String(row['Discount Value']).replace(/[^0-9.-]/g, '');
+    const discValue = parseFloat(discountValueStr);
+    if (isNaN(discValue)) { alert("Invalid price value"); return; }
+
+    const modal = document.getElementById('detailModal');
+    const backdrop = document.getElementById('detailModalBackdrop');
+
+    document.getElementById('detailModalTitle').textContent = "OTD Price Breakdown";
+    document.getElementById('detailModalId').textContent = `Base Price: $${discValue.toFixed(2)}`;
+    document.getElementById('detailModalType').textContent = row.Name;
+
+    const ALL_LOCATIONS_LIST = [
+        "Beverly Hills", "Davis", "Dixon", "El Sobrante", "Fresno (Palm)",
+        "Fresno Shaw", "Hawthorne", "Koreatown", "Laguna Woods",
+        "Oxnard", "Riverside", "West Hollywood"
+    ];
+
+    let applicableStores = [];
+    const locRaw = row.Locations || '';
+    if (locRaw === 'All Locations') {
+        applicableStores = ALL_LOCATIONS_LIST;
+    } else {
+        applicableStores = locRaw.split(',').map(l => l.trim()).filter(l => l);
+    }
+
+    let targetOtd = null;
+    let skipAudit = false;
+    if (/BOGO|B2G1|B1G2/i.test(row.Name)) {
+        const bracketMatch = row.Name.match(/\[\$([0-9.]+)\]/);
+        if (bracketMatch) { targetOtd = parseFloat(bracketMatch[1]); }
+        else { skipAudit = true; }
+    } else {
+        const bulkMatch = row.Name.match(/(\d+)\s+for\s+\$([0-9.]+)/i);
+        if (bulkMatch) targetOtd = parseFloat(bulkMatch[2]);
+    }
+
+    let bodyHTML = '<div class="section-header" style="color:#28a745;"> OUT THE DOOR PRICES</div>';
+
+    if (typeof TAX_RATES === 'undefined' || Object.keys(TAX_RATES).length === 0) {
+        bodyHTML += '<div class="alert alert-warning">Tax rates not loaded yet. Please wait or check Setup tab.</div>';
+    } else {
+        const sortedStores = Object.keys(TAX_RATES).sort();
+        let foundAny = false;
+
+        sortedStores.forEach(store => {
+            const isApplicable = applicableStores.some(loc =>
+                loc.includes(store) || store.includes(loc));
+            if (!isApplicable) return;
+
+            foundAny = true;
+            const rate = TAX_RATES[store];
+            const otdPrice = discValue * rate;
+            const otdDisplay = otdPrice.toFixed(2);
+
+            let rowColor = "color:#198754;";
+            let auditInfo = "";
+            let fixAction = "";
+
+            if (!skipAudit && targetOtd !== null && (priceCheckAll ? true : DAVIS_DIXON_STORES.includes(store))) {
+                const otdRounded = parseFloat(otdDisplay);
+                const diff = Math.abs(otdRounded - targetOtd);
+                if (diff < 0.009) {
+                    auditInfo = ` <span style="color:#198754; font-size:0.8em;">([OK]✅ Target: $${targetOtd.toFixed(2)})</span>`;
+                } else if (diff <= 0.019) {
+                    rowColor = "color:#fd7e14;";
+                    auditInfo = ` <span style="color:#fd7e14; font-size:0.8em;">([!] ⚠️ Target: $${targetOtd.toFixed(2)})</span>`;
+                } else {
+                    rowColor = "color:#dc3545; font-weight:bold;";
+                    auditInfo = ` <span style="color:#dc3545; font-size:0.8em;">([X] Target: $${targetOtd.toFixed(2)})</span>`;
+                    const correctPreTax = (targetOtd / rate).toFixed(2);
+                    fixAction = `<button class="btn btn-sm btn-outline-danger"
+                        style="padding:0px 6px; font-size:0.75em; margin-left:10px;"
+                        onclick="navigator.clipboard.writeText('${correctPreTax}'); this.innerText='Copied!';">
+                        Copy Fix: $${correctPreTax}</button>`;
+                }
+            }
+
+            bodyHTML += `<div class="data-row" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #eee; padding:6px 0;">
+                <div><span class="data-label" style="font-size:1.1em;">${store}</span>${auditInfo}</div>
+                <div style="display:flex; align-items:center;">
+                    <span class="data-value" style="${rowColor} font-size:1.1em;">$${otdDisplay}</span>
+                    ${fixAction}
+                </div>
+            </div>`;
+        });
+
+        if (!foundAny) {
+            bodyHTML += '<div class="data-row">No matching stores found for this promotion.</div>';
+        }
+    }
+
+    document.getElementById('detailModalBody').innerHTML = bodyHTML;
+    modal.style.display = 'block';
+    backdrop.style.display = 'block';
+}
+
+// ============================================
+// DETAIL HOVER MODAL (monolith lines 19950–20095)
+// ============================================
+function showDetailModal(row, isPinned = false) {
+    const modal = document.getElementById('detailModal');
+    const backdrop = document.getElementById('detailModalBackdrop');
+    if (!modal || !backdrop) return;
+
+    document.getElementById('detailModalTitle').textContent = row.Name || 'N/A';
+    document.getElementById('detailModalId').textContent = `ID: ${row.ID || 'N/A'}`;
+    document.getElementById('detailModalType').textContent = `Type: ${row['Discount Value Type'] || 'N/A'}`;
+
+    let bodyHTML = '';
+
+    // SETUP
+    bodyHTML += '<div class="section-header" style="color:#0066cc;"> SETUP</div>';
+    bodyHTML += `<div class="data-row"><span class="data-label">Description:</span> ${row.description || 'None'}</div>`;
+
+    if (row.buy_requirements && row.buy_requirements.length > 0) {
+        bodyHTML += '<div class="data-row"><span class="data-label">Buy Requirements:</span></div>';
+        row.buy_requirements.forEach(req => {
+            bodyHTML += `<div class="data-row" style="padding-left:30px;">&#x2022; Qty: ${req.quantity} | Items: ${req.items.join(', ')}</div>`;
+        });
+    } else {
+        bodyHTML += '<div class="data-row"><span class="data-label">Buy Requirements:</span> None</div>';
+    }
+
+    if (row.buy_qty || row.get_qty) {
+        bodyHTML += `<div class="data-row"><span class="data-label">Buy/Get Qty:</span> Buy ${row.buy_qty || 1} / Get ${row.get_qty || 1}</div>`;
+    }
+
+    bodyHTML += `<div class="data-row"><span class="data-label">Get/Target:</span> ${row.target_type || 'N/A'} - ${row.target_value || 'N/A'}</div>`;
+
+    // ADVANCED
+    bodyHTML += '<div class="section-header" style="color:#cc6600;">&#x2699;️ ADVANCED</div>';
+    bodyHTML += `<div class="data-row"><span class="data-label">Auto Apply:</span> ${row.auto_apply ? 'Yes' : 'No'}</div>`;
+    bodyHTML += `<div class="data-row"><span class="data-label">Stackable:</span> ${row.stackable ? 'Yes' : 'No'}</div>`;
+    bodyHTML += `<div class="data-row"><span class="data-label">Lowest Price First:</span> ${row.apply_lowest_price_first ? 'Yes' : 'No'}</div>`;
+    bodyHTML += `<div class="data-row"><span class="data-label">Priority:</span> ${row.priority || '5 - Lowest'}</div>`;
+
+    if (row.enable_promo_code) {
+        bodyHTML += `<div class="data-row"><span class="data-label">Promo Code:</span> ${row.promo_code || 'N/A'}</div>`;
+    }
+
+    bodyHTML += `<div class="data-row"><span class="data-label">Max Uses (Total):</span> ${row.max_uses || 'Unlimited'}</div>`;
+    bodyHTML += `<div class="data-row"><span class="data-label">Max Uses (Per Member):</span> ${row.max_uses_per_consumer || 'Unlimited'}</div>`;
+
+    if (row.restrictions) {
+        const hasR = row.restrictions.member_groups.length > 0 ||
+                     row.restrictions.consumer_types.length > 0 ||
+                     row.restrictions.sales_channels.length > 0;
+        if (hasR) {
+            bodyHTML += '<div class="data-row"><span class="data-label">Restrictions:</span></div>';
+            if (row.restrictions.member_groups.length > 0)
+                bodyHTML += `<div class="data-row" style="padding-left:30px;">&#x2022; Member Groups: ${row.restrictions.member_groups.join(', ')}</div>`;
+            if (row.restrictions.consumer_types.length > 0)
+                bodyHTML += `<div class="data-row" style="padding-left:30px;">&#x2022; Consumer Types: ${row.restrictions.consumer_types.join(', ')}</div>`;
+            if (row.restrictions.sales_channels.length > 0)
+                bodyHTML += `<div class="data-row" style="padding-left:30px;">&#x2022; Sales Channels: ${row.restrictions.sales_channels.join(', ')}</div>`;
+        }
+    }
+
+    // SCHEDULE
+    bodyHTML += '<div class="section-header" style="color:#009933;"> SCHEDULE</div>';
+    bodyHTML += `<div class="data-row"><span class="data-label">Date Range:</span> ${row['Start Date']} to ${row['End Date']}</div>`;
+
+    if (row.time_constraint) {
+        if (row.time_constraint.days && row.time_constraint.days.length > 0)
+            bodyHTML += `<div class="data-row"><span class="data-label">Days:</span> ${row.time_constraint.days.join(', ')}</div>`;
+        if (row.time_constraint.start_time && row.time_constraint.end_time)
+            bodyHTML += `<div class="data-row"><span class="data-label">Time:</span> ${row.time_constraint.start_time} - ${row.time_constraint.end_time}</div>`;
+    }
+
+    document.getElementById('detailModalBody').innerHTML = bodyHTML;
+
+    detailModalState.isPinned = isPinned;
+    detailModalState.currentPromoId = row.ID;
+
+    modal.style.display = 'block';
+    if (isPinned) backdrop.style.display = 'block';
+}
+
+function hideDetailModal() {
+    if (detailModalState.isPinned) return;
+    const modal = document.getElementById('detailModal');
+    const backdrop = document.getElementById('detailModalBackdrop');
+    if (modal) modal.style.display = 'none';
+    if (backdrop) backdrop.style.display = 'none';
+    detailModalState.currentPromoId = null;
+}
+
+function closeDetailModal() {
+    const modal = document.getElementById('detailModal');
+    const backdrop = document.getElementById('detailModalBackdrop');
+    if (modal) modal.style.display = 'none';
+    if (backdrop) backdrop.style.display = 'none';
+    detailModalState.isPinned = false;
+    detailModalState.currentPromoId = null;
+}
+
+function toggleDetailPin(row) {
+    if (detailModalState.isPinned && detailModalState.currentPromoId === row.ID) {
+        closeDetailModal();
+    } else {
+        if (detailModalState.currentPromoId && detailModalState.currentPromoId !== row.ID) {
+            closeDetailModal();
+        }
+        showDetailModal(row, true);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const backdrop = document.getElementById('detailModalBackdrop');
+    if (backdrop) backdrop.addEventListener('click', closeDetailModal);
+});
+
+// ============================================
+// switchBlazeTab — toggle Promos / Inventory sub-tab (monolith line 21383)
+// ============================================
+function switchBlazeTab(mode) {
+    const promoContent = document.getElementById('blaze-promo-content');
+    const invContent = document.getElementById('blaze-inv-content');
+    const promoBtn = document.getElementById('btn-blaze-promo');
+    const invBtn = document.getElementById('btn-blaze-inv');
+
+    if (mode === 'promo') {
+        promoContent.style.display = 'block';
+        invContent.style.display = 'none';
+        promoBtn.classList.add('active');
+        invBtn.classList.remove('active');
+        setTimeout(function() {
+            if ($.fn.DataTable.isDataTable('#promotionsTable')) {
+                const table = $('#promotionsTable').DataTable();
+                table.columns.adjust();
+                table.draw(false);
+                $(window).trigger('resize');
+            }
+        }, 100);
+    } else {
+        promoContent.style.display = 'none';
+        invContent.style.display = 'block';
+        promoBtn.classList.remove('active');
+        invBtn.classList.add('active');
+    }
+}
+
+
+// ============================================================
+// EXPORT FUNCTIONS (monolith lines 18949–19035)
+// ============================================================
+async function exportData(mode) {
+    if (mode === 'full') {
+        window.location.href = '/api/blaze/export-csv';
+    } else {
+        console.log('Export mode not implemented:', mode);
+    }
+}
+
+async function exportFilteredData() {
+    if (!$.fn.DataTable.isDataTable('#promotionsTable')) {
+        alert('Table not initialized');
+        return;
+    }
+
+    const table = $('#promotionsTable').DataTable();
+    const filteredData = table.rows({ search: 'applied' }).data();
+
+    if (filteredData.length === 0) {
+        alert('No filtered data to export');
+        return;
+    }
+
+    // Collect visible row IDs via data-promo-id (most reliable)
+    const visibleIds = [];
+    const visibleRows = table.rows({ search: 'applied' }).nodes();
+    $(visibleRows).each(function() {
+        const promoId = $(this).attr('data-promo-id');
+        if (promoId) visibleIds.push(promoId);
+    });
+
+    // Fallback: parse from ID column HTML
+    if (visibleIds.length === 0) {
+        const idColIndex = draftSelectionState.isActive ? 2 : 1;
+        filteredData.each(function(rowData) {
+            const idMatch = String(rowData[idColIndex]).match(/(\d+)/);
+            if (idMatch) visibleIds.push(idMatch[1]);
+        });
+    }
+
+    if (visibleIds.length === 0) {
+        alert('Could not extract IDs from filtered data');
+        return;
+    }
+
+    console.log('[EXPORT] Exporting ' + visibleIds.length + ' filtered rows');
+
+    try {
+        const response = await fetch('/api/blaze/export-filtered-csv', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: visibleIds })
+        });
+
+        if (response.ok) {
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `blaze_filtered_report_${new Date().toISOString().slice(0,19).replace(/[:-]/g,'')}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        } else {
+            alert('Export failed: ' + await response.text());
+        }
+    } catch (e) {
+        alert('Export error: ' + e.message);
+    }
+}
+
+// ============================================================
+// ZOMBIE CLEANUP (monolith lines 19051–19310)
+// ============================================================
+function toggleZombieCleanupMode() {
+    const toggle = document.getElementById('zombieCleanupToggle');
+    const btn = document.getElementById('zombieCleanupBtn');
+    if (toggle.checked) {
+        btn.style.display = 'inline-block';
+    } else {
+        btn.style.display = 'none';
+        if (zombieCleanupState.isActive) finishZombieCleanup();
+    }
+}
+
+function startZombieCleanup() {
+    zombieCleanupState.originalFilters.nameFilter = document.getElementById('blazeNameSearch').value;
+    zombieCleanupState.originalFilters.subFilter  = document.getElementById('blazeSubSearch').value;
+
+    const zombieIds = findZombieIds();
+    if (zombieIds.length === 0) {
+        alert('No zombie deals found! All active deals have valid end dates.');
+        return;
+    }
+
+    zombieCleanupState.zombieIds    = zombieIds;
+    zombieCleanupState.currentIndex = 0;
+
+    document.getElementById('zombieCountDisplay').textContent         = zombieIds.length;
+    document.getElementById('zombieModalBackdrop').style.display      = 'block';
+    document.getElementById('zombieModal').style.display              = 'block';
+    document.getElementById('zombieActionButtons').style.display      = 'flex';
+    document.getElementById('zombieProgressContainer').style.display  = 'none';
+}
+
+function findZombieIds() {
+    const zombieIds = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    if (blazeData.currentRows && Array.isArray(blazeData.currentRows)) {
+        blazeData.currentRows.forEach(row => {
+            const status     = (row.Status || '').trim();
+            const endDateStr = (row['End Date'] || '').trim();
+            if (status === 'Active' && endDateStr) {
+                try {
+                    const parts = endDateStr.split('-');
+                    if (parts.length === 3) {
+                        const endDate = new Date(parts[0], parts[1] - 1, parts[2]);
+                        endDate.setHours(0, 0, 0, 0);
+                        if (endDate.getTime() < today.getTime()) zombieIds.push(row.ID);
+                    }
+                } catch (e) { console.error('Date parse error', e); }
+            }
+        });
+    }
+    return zombieIds;
+}
+
+function applyZombieFilter() {
+    if (!$.fn.DataTable.isDataTable('#promotionsTable')) return;
+    const table = $('#promotionsTable').DataTable();
+
+    document.getElementById('blazeNameSearch').value = '';
+    document.getElementById('blazeSubSearch').value  = '';
+    const nameColIndex   = getBlazeColumnIndex('name');
+    const statusColIndex = getBlazeColumnIndex('status');
+    const endColIndex    = getBlazeColumnIndex('end');
+    table.column(nameColIndex).search('');
+    table.search('');
+
+    $.fn.dataTable.ext.search.push(function(settings, data) {
+        if (settings.nTable.id !== 'promotionsTable') return true;
+        const statusHTML  = data[statusColIndex] || '';
+        const endDateHTML = data[endColIndex]    || '';
+        if (!statusHTML.includes('Active')) return false;
+        const dateMatch = endDateHTML.match(/\d{4}-\d{2}-\d{2}/);
+        if (!dateMatch) return false;
+        try {
+            const endDate = new Date(dateMatch[0]);
+            const today   = new Date();
+            endDate.setHours(0, 0, 0, 0);
+            today.setHours(0, 0, 0, 0);
+            return endDate < today;
+        } catch (e) { return false; }
+    });
+
+    table.draw();
+}
+
+function clearZombieFilter() {
+    $.fn.dataTable.ext.search.pop();
+    if (!$.fn.DataTable.isDataTable('#promotionsTable')) return;
+    $('#promotionsTable').DataTable().draw();
+}
+
+function runManualCleanup() {
+    zombieCleanupState.isActive    = true;
+    zombieCleanupState.isManualMode = true;
+    document.getElementById('zombieModalBackdrop').style.display = 'none';
+    document.getElementById('zombieModal').style.display         = 'none';
+    applyZombieFilter();
+    const btn = document.getElementById('zombieCleanupBtn');
+    btn.innerHTML = '[OK]✅ Finish Cleanup';
+    btn.classList.add('cleanup-mode');
+    btn.onclick = finishZombieCleanup;
+}
+
+async function runAutoCleanup() {
+    zombieCleanupState.isActive     = true;
+    zombieCleanupState.isManualMode = false;
+    zombieCleanupState.currentIndex = 0;
+
+    document.getElementById('zombieActionButtons').style.display     = 'none';
+    document.getElementById('zombieProgressContainer').style.display = 'block';
+    applyZombieFilter();
+
+    const btn = document.getElementById('zombieCleanupBtn');
+    btn.innerHTML = '<span class="spin"></span> Processing...';
+    btn.disabled  = true;
+
+    const total = zombieCleanupState.zombieIds.length;
+    for (let i = 0; i < total; i++) {
+        zombieCleanupState.currentIndex = i;
+        const promoId = zombieCleanupState.zombieIds[i];
+        const percent = Math.round(((i + 1) / total) * 100);
+        document.getElementById('zombieProgressFill').style.width = percent + '%';
+        document.getElementById('zombieProgressText').textContent = `Processing ${i + 1} of ${total}: ID ${promoId}`;
+
+        try {
+            const response = await fetch('/api/blaze/zombie-disable', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ promo_id: promoId })
+            });
+            const result = await response.json();
+            if (!result.success) {
+                document.getElementById('zombieProgressText').textContent =
+                    `[!] ⚠️ Error on ID ${promoId}: ${result.error}. Continuing...`;
+                await new Promise(r => setTimeout(r, 2000));
+            }
+        } catch (e) {
+            document.getElementById('zombieProgressText').textContent =
+                `[!] ⚠️ Network error on ID ${promoId}. Continuing...`;
+            await new Promise(r => setTimeout(r, 2000));
+        }
+        await new Promise(r => setTimeout(r, 500));
+    }
+
+    document.getElementById('zombieProgressText').textContent         = `[OK]✅ Completed! Disabled ${total} zombie deal(s).`;
+    document.getElementById('zombieProgressFill').style.width         = '100%';
+    document.getElementById('zombieProgressFill').style.background    = '#28a745';
+    await new Promise(r => setTimeout(r, 2000));
+    finishZombieCleanup();
+    fetchBlazeData();
+}
+
+function cancelZombieCleanup() {
+    document.getElementById('zombieModalBackdrop').style.display = 'none';
+    document.getElementById('zombieModal').style.display         = 'none';
+    zombieCleanupState.isActive  = false;
+    zombieCleanupState.zombieIds = [];
+}
+
+function finishZombieCleanup() {
+    clearZombieFilter();
+    document.getElementById('zombieModalBackdrop').style.display     = 'none';
+    document.getElementById('zombieModal').style.display             = 'none';
+    document.getElementById('zombieActionButtons').style.display     = 'flex';
+    document.getElementById('zombieProgressContainer').style.display = 'none';
+    document.getElementById('zombieProgressFill').style.width        = '0%';
+    document.getElementById('zombieProgressFill').style.background   = 'linear-gradient(90deg, #dc3545, #fd7e14)';
+
+    const btn = document.getElementById('zombieCleanupBtn');
+    btn.innerHTML = ' Zombie Cleanup';
+    btn.classList.remove('cleanup-mode');
+    btn.onclick  = startZombieCleanup;
+    btn.disabled = false;
+
+    document.getElementById('blazeNameSearch').value = zombieCleanupState.originalFilters.nameFilter;
+    document.getElementById('blazeSubSearch').value  = zombieCleanupState.originalFilters.subFilter;
+    applyBlazeFilters();
+
+    zombieCleanupState.isActive     = false;
+    zombieCleanupState.isManualMode = false;
+    zombieCleanupState.zombieIds    = [];
+    zombieCleanupState.currentIndex = 0;
+}
+
+// ============================================================
+// DRAFT SELECTED (monolith lines 19325–19700)
+// ============================================================
+function toggleDraftSelectionMode() {
+    const toggle = document.getElementById('draftSelectionToggle');
+    const btn    = document.getElementById('draftSelectedBtn');
+    if (toggle.checked) {
+        draftSelectionState.isActive = true;
+        btn.style.display = 'inline-block';
+        rerenderBlazeTableWithCheckboxes();
+        updateDraftSelectedCount();
+    } else {
+        draftSelectionState.isActive = false;
+        btn.style.display = 'none';
+        draftSelectionState.selectedDealIds.clear();
+        rerenderBlazeTableWithCheckboxes();
+    }
+}
+
+function rerenderBlazeTableWithCheckboxes() {
+    if (!$.fn.DataTable.isDataTable('#promotionsTable')) return;
+    const table    = $('#promotionsTable').DataTable();
+    const isActive = draftSelectionState.isActive;
+    const thead    = document.querySelector('#promotionsTable thead tr');
+    const existing = thead.querySelector('.draft-checkbox-header-cell');
+
+    if (isActive && !existing) {
+        const th = document.createElement('th');
+        th.className  = 'draft-checkbox-header-cell';
+        th.style.cssText = 'width:30px !important; text-align:center;';
+        th.innerHTML  = '<input type="checkbox" class="draft-checkbox-header" onclick="toggleSelectAllVisible(this)" title="Select all visible">';
+        thead.insertBefore(th, thead.firstChild);
+    } else if (!isActive && existing) {
+        existing.remove();
+    }
+
+    const rows = document.querySelectorAll('#promotionsTable tbody tr');
+    rows.forEach(row => {
+        const existingCell = row.querySelector('.draft-checkbox-cell');
+        const rowId        = row.getAttribute('data-promo-id');
+        if (isActive) {
+            if (!existingCell && rowId) {
+                const td       = document.createElement('td');
+                td.className   = 'draft-checkbox-cell';
+                const isChecked = draftSelectionState.selectedDealIds.has(rowId);
+                td.innerHTML   = `<input type="checkbox" class="draft-checkbox" data-promo-id="${rowId}" ${isChecked ? 'checked' : ''} onchange="toggleDraftSelection('${rowId}', this.checked)">`;
+                row.insertBefore(td, row.firstChild);
+            } else if (existingCell && rowId) {
+                const cb = existingCell.querySelector('input');
+                if (cb) cb.checked = draftSelectionState.selectedDealIds.has(rowId);
+            }
+        } else if (existingCell) {
+            existingCell.remove();
+        }
+    });
+
+    table.columns.adjust().draw(false);
+}
+
+function toggleDraftSelection(promoId, isChecked) {
+    if (isChecked) draftSelectionState.selectedDealIds.add(promoId);
+    else           draftSelectionState.selectedDealIds.delete(promoId);
+    updateDraftSelectedCount();
+}
+
+function toggleSelectAllVisible(headerCheckbox) {
+    const visibleIds = getVisibleDealIds();
+    if (headerCheckbox.checked) {
+        if (!confirm(`This will select ${visibleIds.length} currently visible deal(s). Continue?`)) {
+            headerCheckbox.checked = false;
+            return;
+        }
+        visibleIds.forEach(id => draftSelectionState.selectedDealIds.add(id));
+    } else {
+        visibleIds.forEach(id => draftSelectionState.selectedDealIds.delete(id));
+    }
+    updateDraftCheckboxes();
+    updateDraftSelectedCount();
+}
+
+function getVisibleDealIds() {
+    const ids  = [];
+    const rows = document.querySelectorAll('#promotionsTable tbody tr');
+    rows.forEach(row => {
+        if (row.style.display !== 'none') {
+            const promoId = row.getAttribute('data-promo-id');
+            if (promoId) ids.push(promoId);
+        }
+    });
+    return ids;
+}
+
+function updateDraftCheckboxes() {
+    document.querySelectorAll('.draft-checkbox').forEach(cb => {
+        cb.checked = draftSelectionState.selectedDealIds.has(cb.getAttribute('data-promo-id'));
+    });
+}
+
+function updateDraftSelectedCount() {
+    const count = draftSelectionState.selectedDealIds.size;
+    document.getElementById('draftSelectedCount').textContent = count;
+    const btn = document.getElementById('draftSelectedBtn');
+    if (count > 0) { btn.classList.add('has-selections');    btn.disabled = false; }
+    else           { btn.classList.remove('has-selections'); btn.disabled = true;  }
+}
+
+function startDraftSelected() {
+    const count = draftSelectionState.selectedDealIds.size;
+    if (count === 0) { alert('No deals selected. Use the checkboxes to select deals first.'); return; }
+    document.getElementById('draftCountDisplay').textContent           = count;
+    document.getElementById('draftModalBackdrop').style.display        = 'block';
+    document.getElementById('draftModal').style.display                = 'block';
+    document.getElementById('draftActionButtons').style.display        = 'flex';
+    document.getElementById('draftProgressContainer').style.display    = 'none';
+}
+
+function cancelDraftModal() {
+    document.getElementById('draftModalBackdrop').style.display = 'none';
+    document.getElementById('draftModal').style.display         = 'none';
+}
+
+async function runDraftAutomation() {
+    const selectedIds = Array.from(draftSelectionState.selectedDealIds);
+    const total       = selectedIds.length;
+    draftSelectionState.isAutomating = true;
+    draftSelectionState.shouldStop   = false;
+    draftSelectionState.currentIndex = 0;
+    draftSelectionState.draftedDeals = [];
+    draftSelectionState.totalToDraft = total;
+
+    document.getElementById('draftActionButtons').style.display     = 'none';
+    document.getElementById('draftProgressContainer').style.display = 'block';
+    document.getElementById('draftStopBtn').style.display           = 'block';
+
+    for (let i = 0; i < total; i++) {
+        if (draftSelectionState.shouldStop) {
+            document.getElementById('draftProgressText').textContent =
+                `Stopped at ${i} of ${total}. ${draftSelectionState.draftedDeals.length} drafted.`;
+            break;
+        }
+
+        draftSelectionState.currentIndex = i;
+        const promoId  = selectedIds[i];
+        const dealInfo = blazeData.currentRows?.find(r => String(r.ID) === String(promoId));
+        const percent  = Math.round(((i + 1) / total) * 100);
+        document.getElementById('draftProgressFill').style.width = percent + '%';
+        document.getElementById('draftProgressText').textContent =
+            `Drafting ${i + 1} of ${total}: ${dealInfo?.Name || 'ID ' + promoId}`;
+
+        try {
+            const response = await fetch('/api/blaze/zombie-disable', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ promo_id: promoId })
+            });
+            const result = await response.json();
+            if (result.success) {
+                draftSelectionState.draftedDeals.push({
+                    id: promoId, name: dealInfo?.Name || 'Unknown', status: 'Drafted',
+                    locations: dealInfo?.Locations || '-',
+                    startDate: dealInfo?.['Start Date'] || '-', endDate: dealInfo?.['End Date'] || '-'
+                });
+            } else {
+                document.getElementById('draftProgressText').textContent =
+                    `Error on ${dealInfo?.Name || promoId}: ${result.error}. Continuing...`;
+                await new Promise(r => setTimeout(r, 2000));
+            }
+        } catch (e) {
+            document.getElementById('draftProgressText').textContent =
+                `Network error on ${dealInfo?.Name || promoId}. Continuing...`;
+            await new Promise(r => setTimeout(r, 2000));
+        }
+        await new Promise(r => setTimeout(r, 500));
+    }
+
+    draftSelectionState.isAutomating = false;
+    if (!draftSelectionState.shouldStop) {
+        document.getElementById('draftProgressText').textContent =
+            `Complete! Drafted ${draftSelectionState.draftedDeals.length} deal(s).`;
+        document.getElementById('draftProgressFill').style.width      = '100%';
+        document.getElementById('draftProgressFill').style.background = '#28a745';
+    }
+    document.getElementById('draftStopBtn').style.display = 'none';
+    await new Promise(r => setTimeout(r, 1500));
+
+    document.getElementById('draftModalBackdrop').style.display     = 'none';
+    document.getElementById('draftModal').style.display             = 'none';
+    document.getElementById('draftActionButtons').style.display     = 'flex';
+    document.getElementById('draftProgressContainer').style.display = 'none';
+    document.getElementById('draftProgressFill').style.width        = '0%';
+    document.getElementById('draftProgressFill').style.background   = 'linear-gradient(90deg, #fd7e14, #ffc107)';
+
+    draftSelectionState.selectedDealIds.clear();
+    updateDraftSelectedCount();
+    updateDraftCheckboxes();
+    showDraftReviewModal();
+    fetchBlazeData();
+}
+
+function stopDraftAutomation() {
+    draftSelectionState.shouldStop = true;
+    const btn = document.getElementById('draftStopBtn');
+    btn.disabled    = true;
+    btn.textContent = 'Stopping...';
+}
+
+function showDraftReviewModal() {
+    const drafted = draftSelectionState.draftedDeals;
+    if (drafted.length === 0) { alert('No deals were drafted.'); return; }
+    document.getElementById('draftReviewCount').textContent = drafted.length;
+
+    let tableHtml = `<table class="table table-sm table-striped" style="font-size:0.85em;">
+        <thead style="background:#e9ecef;">
+            <tr><th>ID</th><th>Name</th><th>Status</th><th>Locations</th><th>Start</th><th>End</th></tr>
+        </thead><tbody>`;
+    drafted.forEach(deal => {
+        tableHtml += `<tr>
+            <td>${deal.id}</td><td>${deal.name}</td>
+            <td><span class="badge bg-success">${deal.status}</span></td>
+            <td title="${deal.locations}" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${deal.locations}</td>
+            <td>${deal.startDate}</td><td>${deal.endDate}</td>
+        </tr>`;
+    });
+    tableHtml += '</tbody></table>';
+
+    document.getElementById('draftReviewTableContainer').innerHTML = tableHtml;
+    document.getElementById('draftReviewModalBackdrop').style.display = 'block';
+    document.getElementById('draftReviewModal').style.display         = 'block';
+}
+
+function closeDraftReviewModal() {
+    document.getElementById('draftReviewModalBackdrop').style.display = 'none';
+    document.getElementById('draftReviewModal').style.display         = 'none';
+    draftSelectionState.draftedDeals = [];
+}
+
+function filterToDraftedDeals() {
+    const draftedIds = draftSelectionState.draftedDeals.map(d => d.id);
+    if (draftedIds.length === 0) return;
+    closeDraftReviewModal();
+    if (!$.fn.DataTable.isDataTable('#promotionsTable')) return;
+    const table = $('#promotionsTable').DataTable();
+
+    document.getElementById('blazeNameSearch').value = '';
+    document.getElementById('blazeSubSearch').value  = '';
+    const nameColIndex = getBlazeColumnIndex('name');
+    const idColIndex   = getBlazeColumnIndex('id');
+    table.column(nameColIndex).search('');
+    table.search('');
+
+    $.fn.dataTable.ext.search.push(function(settings, data) {
+        if (settings.nTable.id !== 'promotionsTable') return true;
+        const idMatch = (data[idColIndex] || '').match(/\d+/);
+        if (!idMatch) return false;
+        return draftedIds.includes(idMatch[0]);
+    });
+    table.draw();
+
+    // Auto-clear filter after 30 seconds
+    setTimeout(() => { $.fn.dataTable.ext.search.pop(); table.draw(); }, 30000);
+}
+
+// ============================================================================
+// BLAZE TABLE FILTERS — one-time init (monolith pattern: register filter once,
+// never inside renderBlazeTable which is called every 2s on auto-sync)
+// ============================================================================
+
+let _blazeFiltersInitialized = false;
+function initBlazeTableFilters() {
+    if (_blazeFiltersInitialized) return;
+    _blazeFiltersInitialized = true;
+
+    // Hide Inactive filter — registered ONCE so it doesn't accumulate on each render
+    $.fn.dataTable.ext.search.push(function(settings, data, dataIndex) {
+        if (settings.nTable.id !== 'promotionsTable') return true;
+        const hideInactive = document.getElementById('hideInactiveToggle');
+        if (hideInactive && hideInactive.checked) {
+            const statusColIdx = getBlazeColumnIndex('status');
+            const statusValue = data[statusColIdx] ? data[statusColIdx].toString().toLowerCase() : '';
+            if (statusValue.includes('inactive')) return false;
+        }
+        return true;
+    });
+
+    const toggle = document.getElementById('hideInactiveToggle');
+    if (toggle) {
+        toggle.addEventListener('change', function() {
+            const dt = $.fn.dataTable.isDataTable('#promotionsTable');
+            if (dt) $('#promotionsTable').DataTable().draw();
+        });
+    }
+}
+
+
+// ============================================================================
+// TAX RATES EDITING FUNCTIONS (Setup Tab) — extracted from monolith lines 20963–21050
+// ============================================================================
+
+async function loadTaxRatesForEdit() {
+    try {
+        const resp = await fetch('/api/tax-rates');
+        const data = await resp.json();
+
+        if (!data.success) {
+            alert('Failed to load tax rates: ' + data.error);
+            return;
+        }
+
+        const rates = data.rates;
+        const container = document.getElementById('tax-rates-container');
+        if (!container) return;
+        container.innerHTML = '';
+
+        // Sort stores alphabetically
+        const stores = Object.keys(rates).sort();
+
+        stores.forEach(store => {
+            const rate = rates[store];
+            const col = document.createElement('div');
+            col.className = 'col-md-6 col-lg-4';
+
+            col.innerHTML = `
+                <div class="input-group input-group-sm mb-2">
+                    <span class="input-group-text" style="width: 140px; font-size: 0.85em;">${store}</span>
+                    <input type="number"
+                           class="form-control tax-rate-input"
+                           data-store="${store}"
+                           value="${rate}"
+                           step="0.000001"
+                           style="font-size: 0.85em;">
+                </div>
+            `;
+
+            container.appendChild(col);
+        });
+
+        const statusEl = document.getElementById('tax-save-status');
+        if (statusEl) statusEl.innerHTML = '';
+
+    } catch (err) {
+        console.error('Error loading tax rates:', err);
+        alert('Error loading tax rates: ' + err.message);
+    }
+}
+
+async function saveTaxRates() {
+    try {
+        const inputs = document.querySelectorAll('.tax-rate-input');
+        const rates = {};
+
+        inputs.forEach(input => {
+            const store = input.dataset.store;
+            const value = parseFloat(input.value);
+
+            if (isNaN(value)) {
+                throw new Error(`Invalid rate for ${store}: ${input.value}`);
+            }
+
+            rates[store] = value;
+        });
+
+        const resp = await fetch('/api/save-tax-rates', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({rates: rates})
+        });
+
+        const data = await resp.json();
+        const statusDiv = document.getElementById('tax-save-status');
+
+        if (data.success) {
+            statusDiv.innerHTML = '<span class="text-success">[SUCCESS] ' + data.message + '</span>';
+            // Refresh the editor inputs and repopulate calculator dropdown
+            await loadTaxRatesForEdit();
+            await loadTaxRates();
+        } else {
+            statusDiv.innerHTML = '<span class="text-danger">[X] ' + data.error + '</span>';
+        }
+
+    } catch (err) {
+        console.error('Error saving tax rates:', err);
+        const statusDiv = document.getElementById('tax-save-status');
+        if (statusDiv) {
+            statusDiv.innerHTML = '<span class="text-danger">[X] Error: ' + err.message + '</span>';
+        }
+    }
+}
+
+// ============================================================================
+// TAX CALCULATOR FUNCTIONS — extracted from monolith lines 21058–21260
+// Powers calcModal: loadTaxRates, populateStoreDropdown, updateTaxRateDisplay,
+// runAllCalculations, switchCalculator, calculatePostTax/PreTax/Percentage/
+// VendorRebate/Reprice
+// ============================================================================
+
+let currentStore = '';
+
+async function loadTaxRates() {
+    try {
+        const resp = await fetch('/api/tax-rates');
+        const data = await resp.json();
+
+        if (data.success) {
+            TAX_RATES = data.rates;
+            populateStoreDropdown();
+        } else {
+            console.error('Failed to load tax rates:', data.error);
+            const el = document.getElementById('calcStoreSelect');
+            if (el) el.innerHTML = '<option value="">-- No tax rates found --</option>';
+        }
+    } catch (err) {
+        console.error('Error loading tax rates:', err);
+        const el = document.getElementById('calcStoreSelect');
+        if (el) el.innerHTML = '<option value="">-- Error loading rates --</option>';
+    }
+}
+
+function populateStoreDropdown() {
+    const select = document.getElementById('calcStoreSelect');
+    if (!select) return;
+    const stores = Object.keys(TAX_RATES).sort();
+
+    select.innerHTML = '<option value="">-- Select Store --</option>';
+    stores.forEach(store => {
+        const option = document.createElement('option');
+        option.value = store;
+        option.textContent = store;
+        select.appendChild(option);
+    });
+
+    if (stores.length > 0) {
+        select.value = stores[0];
+        currentStore = stores[0];
+        updateTaxRateDisplay();
+    }
+}
+
+function updateTaxRateDisplay() {
+    const select = document.getElementById('calcStoreSelect');
+    if (!select) return;
+    currentStore = select.value;
+    const display = document.getElementById('calcTaxDisplay');
+    if (!display) return;
+
+    if (currentStore && TAX_RATES[currentStore]) {
+        const rate = TAX_RATES[currentStore];
+        const percentage = ((rate - 1) * 100).toFixed(2);
+        display.textContent = `Tax Rate: ${rate.toFixed(4)} (${percentage}% tax)`;
+    } else {
+        display.textContent = 'Tax Rate: Not selected';
+    }
+}
+
+function toggleCalcModal() {
+    const modal = document.getElementById('calcModal');
+    if (!modal) return;
+    if (modal.classList.contains('show')) {
+        modal.classList.remove('show');
+    } else {
+        modal.classList.add('show');
+    }
+}
+
+function runAllCalculations() {
+    calculatePostTax();
+    calculatePreTax();
+    calculatePercentage();
+    calculateVendorRebate();
+    calculateReprice();
+}
+
+function switchCalculator() {
+    const selected = document.getElementById('calcTypeSelect').value;
+    const sections = ['calc-postTax', 'calc-preTax', 'calc-percent', 'calc-rebate', 'calc-reprice'];
+
+    sections.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = (id === 'calc-' + selected) ? 'block' : 'none';
+    });
+}
+
+function calculatePostTax() {
+    if (!currentStore || !TAX_RATES[currentStore]) {
+        document.getElementById('postTaxResult').textContent = '-- (Select Store)';
+        return;
+    }
+    const inputVal = document.getElementById('postTaxInput').value;
+    if (inputVal === '') { document.getElementById('postTaxResult').textContent = '--'; return; }
+    const afterTax = parseFloat(inputVal) * TAX_RATES[currentStore];
+    document.getElementById('postTaxResult').textContent = '$' + afterTax.toFixed(2);
+}
+
+function calculatePreTax() {
+    if (!currentStore || !TAX_RATES[currentStore]) {
+        document.getElementById('preTaxResult').textContent = '-- (Select Store)';
+        return;
+    }
+    const inputVal = document.getElementById('preTaxInput').value;
+    if (inputVal === '') { document.getElementById('preTaxResult').textContent = '--'; return; }
+    const discountValue = parseFloat(inputVal) / TAX_RATES[currentStore];
+    document.getElementById('preTaxResult').textContent = '$' + discountValue.toFixed(2);
+}
+
+function calculatePercentage() {
+    const baseVal = document.getElementById('percBaseInput').value;
+    const resVal = document.getElementById('percResultInput').value;
+    if (baseVal === '' || resVal === '') { document.getElementById('percResult').textContent = '--'; return; }
+    const base = parseFloat(baseVal);
+    if (base === 0) { document.getElementById('percResult').textContent = 'Error'; return; }
+    const percentage = ((base - parseFloat(resVal)) / base) * 100;
+    document.getElementById('percResult').textContent = percentage.toFixed(2) + '%';
+}
+
+function calculateVendorRebate() {
+    const discVal = document.getElementById('vendorDiscountInput').value;
+    const rebateVal = document.getElementById('vendorRebateInput').value;
+    if (discVal === '' || rebateVal === '') { document.getElementById('vendorResult').textContent = '--'; return; }
+    const vendorContribution = (parseFloat(discVal) * parseFloat(rebateVal)) / 100;
+    document.getElementById('vendorResult').textContent = '$' + vendorContribution.toFixed(2);
+}
+
+function calculateReprice() {
+    const origVal = document.getElementById('repriceOriginal').value;
+    const currVal = document.getElementById('repriceCurrent').value;
+    const targetVal = document.getElementById('repriceTargetPerc').value;
+    if (origVal === '' || currVal === '' || targetVal === '') {
+        document.getElementById('repriceResult').textContent = '--';
+        return;
+    }
+    const originalPrice = parseFloat(origVal);
+    if (originalPrice === 0) return;
+    const desiredFinalPrice = originalPrice * (1 - (parseFloat(targetVal) / 100));
+    const differenceNeeded = parseFloat(currVal) - desiredFinalPrice;
+    document.getElementById('repriceResult').textContent = '$' + differenceNeeded.toFixed(3);
+}
+
+// calcModal event listeners (set up once on DOMContentLoaded)
+document.addEventListener('DOMContentLoaded', function() {
+    const calcModal = document.getElementById('calcModal');
+    if (calcModal) {
+        calcModal.addEventListener('click', function(e) {
+            if (e.target === this) toggleCalcModal();
+        });
+    }
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            const modal = document.getElementById('calcModal');
+            if (modal && modal.classList.contains('show')) toggleCalcModal();
+        }
+    });
 });

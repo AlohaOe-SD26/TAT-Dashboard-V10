@@ -29,6 +29,16 @@ let draftSelectionState = {
     totalToDraft: 0
 };
 
+// Detail hover/pin modal state (used by blaze.js showDetailModal/toggleDetailPin)
+let detailModalState = {
+    isPinned: false,
+    currentPromoId: null,
+    hoverTimeout: null
+};
+
+// Tax rates cache — populated by renderBlazeTable pre-fetch, used by showOtdModal
+let TAX_RATES = {};
+
 // v12.25: Zombie cleanup state (used by blaze.js zombie cleanup flow)
 let zombieCleanupState = {
     isActive: false,

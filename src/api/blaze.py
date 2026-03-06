@@ -1834,7 +1834,10 @@ def api_blaze_navigate():
         driver.get(target_url)
         
         # --- ROBUST SETUP CLICKER (Restored) ---
-        max_attempts = 5
+        # Initial settle: give SPA time to mount route before polling begins
+        time.sleep(1.5)
+        
+        max_attempts = 8
         click_success = False
         
         print(f"[BLAZE] Navigating... Starting Setup Tab search (Max {max_attempts} attempts)")
@@ -1853,7 +1856,7 @@ def api_blaze_navigate():
 
                 # 2. If not found, Click the Setup Tab
                 # Matches the container <div> that holds the "Setup" text
-                setup_container = WebDriverWait(driver, 2).until(
+                setup_container = WebDriverWait(driver, 5).until(
                     EC.presence_of_element_located((By.XPATH, "//p[text()='Setup']/parent::div/parent::div"))
                 )
                 
@@ -1861,11 +1864,11 @@ def api_blaze_navigate():
                     driver.execute_script("arguments[0].click();", setup_container)
                     print(f"[BLAZE] Clicked 'Setup' (Attempt {attempt})")
                 
-                time.sleep(0.7)
+                time.sleep(1.0)
                 
             except Exception as e:
                 print(f"[BLAZE] Attempt {attempt} waiting for page load...")
-                time.sleep(0.7)
+                time.sleep(1.0)
 
         if not click_success:
             print("[BLAZE] WARN: Reached max attempts. Setup tab might not be active.")

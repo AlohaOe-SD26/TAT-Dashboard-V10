@@ -14,6 +14,174 @@
     <link rel="stylesheet" href="/static/css/components/preflight.css">
     <link rel="stylesheet" href="/static/css/components/audit.css">
     <link rel="stylesheet" href="/static/css/components/updown.css">
+    <!-- Blaze Tab Styles (extracted from monolith) -->
+    <style>
+        /* ── DETAIL MODAL ─────────────────────────────────── */
+        #detailModalBackdrop {
+            display: none; position: fixed; top: 0; left: 0;
+            width: 100%; height: 100%;
+            background-color: rgba(0,0,0,0.6); z-index: 9998;
+        }
+        #detailModal {
+            display: none; position: fixed; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: #1e1e2e;
+            color: white;
+            border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            max-width: 600px; max-height: 80vh; overflow-y: auto;
+            z-index: 9999; padding: 20px;
+        }
+        #detailModal .modal-header {
+            border-bottom: 2px solid #0066cc;
+            padding-bottom: 15px; margin-bottom: 20px; position: relative;
+        }
+        #detailModal .modal-title { font-size: 1.5rem; font-weight: bold; color: white; margin-bottom: 5px; }
+        #detailModal .modal-id   { font-size: 0.9rem; color: #aaa; margin-bottom: 5px; }
+        #detailModal .modal-type { font-size: 1rem; color: #66aaff; font-weight: bold; }
+        #detailModal .close-btn {
+            position: absolute; top: 0; right: 0;
+            background: #dc3545; color: white; border: none;
+            border-radius: 50%; width: 30px; height: 30px;
+            cursor: pointer; font-size: 1.2rem; line-height: 1; font-weight: bold;
+        }
+        #detailModal .close-btn:hover { background: #c82333; }
+        #detailModal .modal-body { line-height: 1.6; color: white; }
+        #detailModal .section-header {
+            font-size: 1.1rem; font-weight: bold;
+            margin-top: 15px; margin-bottom: 10px;
+            padding-bottom: 5px; border-bottom: 1px solid #444;
+        }
+        #detailModal .data-row   { margin-bottom: 8px; padding-left: 10px; color: white; }
+        #detailModal .data-label { font-weight: bold; color: #ccc; }
+        #detailModal .data-value { color: white; }
+
+        /* ── SPIN ANIMATION ───────────────────────────────── */
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .spin { animation: spin 1s linear infinite; display: inline-block; }
+
+        /* ── ZOMBIE TOGGLE ────────────────────────────────── */
+        .zombie-toggle-container {
+            display: flex; align-items: center; gap: 8px;
+            padding: 4px 8px; background: #f8f9fa;
+            border-radius: 6px; border: 1px solid #dee2e6;
+        }
+        .zombie-toggle-label { font-size: 0.8rem; font-weight: 600; color: #495057; white-space: nowrap; }
+        .zombie-toggle-switch { position: relative; width: 40px; height: 20px; }
+        .zombie-toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .zombie-toggle-slider {
+            position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #ccc; transition: 0.3s; border-radius: 20px;
+        }
+        .zombie-toggle-slider:before {
+            position: absolute; content: ""; height: 14px; width: 14px;
+            left: 3px; bottom: 3px; background-color: white; transition: 0.3s; border-radius: 50%;
+        }
+        .zombie-toggle-switch input:checked + .zombie-toggle-slider { background-color: #dc3545; }
+        .zombie-toggle-switch input:checked + .zombie-toggle-slider:before { transform: translateX(20px); }
+        #zombieCleanupBtn { transition: all 0.3s ease; }
+        #zombieCleanupBtn.cleanup-mode {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%) !important;
+            border-color: #28a745 !important;
+        }
+
+        /* ── ZOMBIE MODAL ─────────────────────────────────── */
+        .zombie-modal-backdrop {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.6); z-index: 10000; display: none;
+        }
+        .zombie-modal {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: white; border-radius: 12px; padding: 25px;
+            width: 500px; max-width: 90%; z-index: 10001; display: none;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }
+        .zombie-modal h3 { margin: 0 0 15px 0; color: #dc3545; display: flex; align-items: center; gap: 10px; }
+        .zombie-modal p  { color: #495057; line-height: 1.6; margin-bottom: 20px; }
+        .zombie-modal .btn-group-vertical { display: flex; flex-direction: column; gap: 10px; }
+        .zombie-modal .btn { padding: 12px 20px; font-weight: 600; border-radius: 8px; }
+        .zombie-progress-container {
+            margin-top: 15px; padding: 15px; background: #f8f9fa; border-radius: 8px; display: none;
+        }
+        .zombie-progress-bar { height: 8px; background: #e9ecef; border-radius: 4px; overflow: hidden; margin-bottom: 10px; }
+        .zombie-progress-fill { height: 100%; background: linear-gradient(90deg, #dc3545, #fd7e14); width: 0%; transition: width 0.3s ease; }
+        .zombie-progress-text { font-size: 0.85rem; color: #6c757d; text-align: center; }
+
+        /* ── DRAFT TOGGLE ─────────────────────────────────── */
+        .draft-toggle-container { display: flex; align-items: center; gap: 6px; }
+        .draft-toggle-label { font-size: 0.8rem; font-weight: 600; color: #fd7e14; }
+        .draft-toggle-switch { position: relative; width: 36px; height: 20px; }
+        .draft-toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .draft-toggle-slider {
+            position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #ccc; transition: .3s; border-radius: 20px;
+        }
+        .draft-toggle-slider:before {
+            position: absolute; content: ""; height: 14px; width: 14px;
+            left: 3px; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%;
+        }
+        .draft-toggle-switch input:checked + .draft-toggle-slider { background-color: #fd7e14; }
+        .draft-toggle-switch input:checked + .draft-toggle-slider:before { transform: translateX(16px); }
+        .draft-checkbox-cell { width: 30px !important; text-align: center; vertical-align: middle; }
+        .draft-checkbox        { width: 18px; height: 18px; cursor: pointer; accent-color: #fd7e14; }
+        .draft-checkbox-header { width: 18px; height: 18px; cursor: pointer; accent-color: #fd7e14; }
+        #draftSelectedBtn { transition: all 0.3s ease; }
+        #draftSelectedBtn.has-selections { animation: pulse-orange 1.5s infinite; }
+        @keyframes pulse-orange {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(253,126,20,0.4); }
+            50%       { box-shadow: 0 0 0 6px rgba(253,126,20,0); }
+        }
+
+        /* ── DRAFT MODAL ──────────────────────────────────── */
+        .draft-modal-backdrop {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5); z-index: 9998;
+        }
+        .draft-modal {
+            display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: white; padding: 30px; border-radius: 12px;
+            box-shadow: 0 10px 50px rgba(0,0,0,0.3); z-index: 9999; max-width: 600px; width: 90%;
+        }
+        .draft-progress-container { display: none; margin-top: 20px; }
+        .draft-progress-bar  { height: 24px; background: #e9ecef; border-radius: 12px; overflow: hidden; }
+        .draft-progress-fill { height: 100%; background: linear-gradient(90deg, #fd7e14, #ffc107); width: 0%; transition: width 0.3s ease; }
+        .draft-progress-text { text-align: center; margin-top: 10px; font-weight: 500; color: #495057; }
+        .draft-review-table  { max-height: 400px; overflow-y: auto; }
+
+        /* ── HIDE INACTIVE TOGGLE ──────────────────────────── */
+        .inactive-toggle-container { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+        .inactive-toggle-label { font-size: 0.8rem; font-weight: 600; color: #6c757d; white-space: nowrap; }
+        .inactive-toggle-switch { position: relative; width: 40px; height: 20px; display: inline-block; }
+        .inactive-toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .inactive-toggle-slider {
+            position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #ccc; border-radius: 20px; transition: 0.3s;
+        }
+        .inactive-toggle-slider:before {
+            position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px;
+            background-color: white; border-radius: 50%; transition: 0.3s;
+        }
+        .inactive-toggle-switch input:checked + .inactive-toggle-slider { background-color: #6c757d; }
+        .inactive-toggle-switch input:checked + .inactive-toggle-slider:before { transform: translateX(20px); }
+
+        /* ── PRICE CHECK ALL TOGGLE ────────────────────────── */
+        .price-check-toggle-container { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+        .price-check-toggle-label { font-size: 0.8rem; font-weight: 600; color: #0d6efd; white-space: nowrap; }
+        .price-check-toggle-switch { position: relative; width: 40px; height: 20px; display: inline-block; }
+        .price-check-toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .price-check-toggle-slider {
+            position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #ccc; border-radius: 20px; transition: 0.3s;
+        }
+        .price-check-toggle-slider:before {
+            position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px;
+            background-color: white; border-radius: 50%; transition: 0.3s;
+        }
+        .price-check-toggle-switch input:checked + .price-check-toggle-slider { background-color: #0d6efd; }
+        .price-check-toggle-switch input:checked + .price-check-toggle-slider:before { transform: translateX(20px); }
+
+        /* ── MISC ─────────────────────────────────────────── */
+        #downloadFilteredBtn { display: none; }
+    </style>
 </head>
 <body>
 <div class="container-main">
@@ -801,6 +969,20 @@
                                 <button id="downloadFilteredBtn" onclick="exportFilteredData()" class="btn btn-info btn-sm">
                                     <i class="bi bi-funnel"></i> Download Filtered
                                 </button>
+                            </div>
+                            <div class="inactive-toggle-container">
+                                <span class="inactive-toggle-label"><i class="bi bi-eye-slash"></i> Hide Inactive</span>
+                                <label class="inactive-toggle-switch">
+                                    <input type="checkbox" id="hideInactiveToggle">
+                                    <span class="inactive-toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="price-check-toggle-container">
+                                <span class="price-check-toggle-label"><i class="bi bi-check2-circle"></i> Price Check - All</span>
+                                <label class="price-check-toggle-switch">
+                                    <input type="checkbox" id="priceCheckAllToggle" onchange="onPriceCheckAllChange()">
+                                    <span class="price-check-toggle-slider"></span>
+                                </label>
                             </div>
                             <div class="mt-2 d-flex gap-2 align-items-center">
                                 <div class="zombie-toggle-container">
