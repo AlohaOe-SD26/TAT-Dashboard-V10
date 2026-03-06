@@ -237,11 +237,25 @@ def fetch_google_sheet_data(tab_name: str) -> Dict[str, pd.DataFrame]:
         
         if not service or not spreadsheet_id:
             raise ValueError("Service not available")
-        
-        result = service.spreadsheets().values().get(
-            spreadsheetId=spreadsheet_id,
-            range=f"'{tab_name}'!A1:AZ2000"
-        ).execute()
+
+        # Attempt the API call; on stale-connection error (WinError 10053 / OSError)
+        # rebuild the service once and retry before giving up.
+        def _execute_fetch(svc: Any) -> Any:
+            return svc.spreadsheets().values().get(
+                spreadsheetId=spreadsheet_id,
+                range=f"'{tab_name}'!A1:AZ2000"
+            ).execute()
+
+        try:
+            result = _execute_fetch(service)
+        except OSError as conn_err:
+            print(f"[SHEETS] Connection error ({conn_err}), rebuilding service and retrying...")
+            new_service = authenticate_google_sheets()
+            if not new_service:
+                raise
+            session.set_sheets_service(new_service)
+            service = new_service
+            result = _execute_fetch(service)
         
         values = result.get('values', [])
         empty_ret = {'weekly': pd.DataFrame(), 'monthly': pd.DataFrame(), 'sale': pd.DataFrame()}

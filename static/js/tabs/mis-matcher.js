@@ -3656,15 +3656,7 @@ function updateApplyButtonsVisibility() {
 // v12.5: BLAZE DISCOUNT SELECTION MODAL
 // ============================================================================
 
-// Global state for Blaze modal
-let blazeModalData = {
-    rowIdx: null,
-    selectedTitles: [],
-    allPromotions: [],
-    filterType: 'NONE',        // v12.5: NONE, BOGO, B2G1, BULK
-    alternateBrands: [],       // v12.5: List of alternate brand names
-    libraryStatusFilter: 'All' // v12.5: All, Active, Inactive
-};
+// Global state for Blaze modal — declared in state.js; used here by reference
 
 async function openBlazeModal(rowIdx) {
     const match = matchesData[rowIdx];

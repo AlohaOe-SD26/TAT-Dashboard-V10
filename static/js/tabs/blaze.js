@@ -748,6 +748,9 @@ let priceCheckAll = false;
 // The restricted two-store audit set when priceCheckAll is OFF
 const DAVIS_DIXON_STORES = ["Davis", "Dixon"];
 
+// Only Price Errors: when true, hide rows that are NOT critical (red) pricing errors
+let priceErrorsOnly = false;
+
 function onPriceCheckAllChange() {
     const toggle = document.getElementById('priceCheckAllToggle');
     priceCheckAll = toggle ? toggle.checked : false;
@@ -756,6 +759,14 @@ function onPriceCheckAllChange() {
     if (blazeData.currentRows && blazeData.currentRows.length > 0) {
         renderBlazeTable(blazeData.currentRows);
     }
+}
+
+function onPriceErrorsOnlyChange() {
+    const toggle = document.getElementById('priceErrorsOnlyToggle');
+    priceErrorsOnly = toggle ? toggle.checked : false;
+    console.log('[PRICE-ERRORS-ONLY]', priceErrorsOnly);
+    const dt = $.fn.dataTable.isDataTable('#promotionsTable');
+    if (dt) $('#promotionsTable').DataTable().draw();
 }
 
 async function renderBlazeTable(rows) {
@@ -966,6 +977,7 @@ async function renderBlazeTable(rows) {
             let discountValueContent = row['Discount Value'];
             const discType = row['Discount Value Type'] || '';
             const isFinalPrice = discType.toLowerCase().includes('final');
+            let rowHasPriceError = false;  // stamped onto <tr> for "Only Price Errors" filter
 
             if (isFinalPrice && discountValueContent && discountValueContent !== '-') {
                 let btnStyle = "color:#0d6efd; border:1px solid #0d6efd;";
@@ -1003,7 +1015,7 @@ async function renderBlazeTable(rows) {
                         }
                     });
 
-                    if (worstState === 3) { btnStyle = "color:#dc3545; border:1px solid #dc3545;"; btnEmoji = " ⚠️⚠️"; }
+                    if (worstState === 3) { btnStyle = "color:#dc3545; border:1px solid #dc3545;"; btnEmoji = " ⚠️⚠️"; rowHasPriceError = true; }
                     else if (worstState === 2) { btnStyle = "color:#fd7e14; border:1px solid #fd7e14;"; btnEmoji = " ⚠️"; }
                     else if (worstState === 1) { btnStyle = "color:#198754; border:1px solid #198754;"; btnEmoji = " ⚠️"; }
                     else { btnStyle = "color:#198754; border:1px solid #198754;"; btnEmoji = " ✅"; }
@@ -1032,6 +1044,7 @@ async function renderBlazeTable(rows) {
                 <td><span style="font-size:0.85rem; font-style:italic;">${daysDisplay}</span></td>
             `;
             tr.setAttribute('data-promo-id', row.ID);
+            tr.setAttribute('data-price-error', rowHasPriceError ? 'true' : 'false');
             tbody.appendChild(tr);
         });
     }
@@ -2157,6 +2170,19 @@ function initBlazeTableFilters() {
             if (dt) $('#promotionsTable').DataTable().draw();
         });
     }
+
+    // Only Price Errors filter — show only rows where worstState === 3 (red button)
+    $.fn.dataTable.ext.search.push(function(settings, data, dataIndex) {
+        if (settings.nTable.id !== 'promotionsTable') return true;
+        if (!priceErrorsOnly) return true;
+        const rowNode = $(settings.nTable).DataTable().row(dataIndex).node();
+        return rowNode && rowNode.getAttribute('data-price-error') === 'true';
+    });
+
+    const errToggle = document.getElementById('priceErrorsOnlyToggle');
+    if (errToggle) {
+        errToggle.addEventListener('change', onPriceErrorsOnlyChange);
+    }
 }
 
 
@@ -2260,8 +2286,7 @@ async function saveTaxRates() {
 // runAllCalculations, switchCalculator, calculatePostTax/PreTax/Percentage/
 // VendorRebate/Reprice
 // ============================================================================
-
-let currentStore = '';
+// currentStore declared in state.js — used here by reference
 
 async function loadTaxRates() {
     try {

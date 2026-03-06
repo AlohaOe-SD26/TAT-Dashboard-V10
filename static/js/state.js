@@ -14,9 +14,13 @@ let blazeModalData = {
     allPromotions: [],
     selectedTitles: [],
     notFoundTitles: [],
-    filterType: 'all',
-    alternateBrands: []
+    filterType: 'NONE',          // v12.5: NONE, BOGO, B2G1, BULK
+    alternateBrands: [],         // v12.5: List of alternate brand names
+    libraryStatusFilter: 'All'   // v12.5: All, Active, Inactive
 };
+
+// v12.5: Tax calculator current store selection (used by blaze.js + mis-audit.js)
+let currentStore = '';
 
 // v12.25.6: Draft selection state (used by blaze.js batch automation)
 let draftSelectionState = {

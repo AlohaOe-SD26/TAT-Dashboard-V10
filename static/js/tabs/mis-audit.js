@@ -1322,16 +1322,7 @@ alert('Export error: ' + e.message);
 // ============================================
 // ZOMBIE CLEANUP - State Management
 // ============================================
-let zombieCleanupState = {
-isActive: false,
-isManualMode: false,
-zombieIds: [],
-currentIndex: 0,
-originalFilters: {
-nameFilter: '',
-subFilter: ''
-}
-};
+// zombieCleanupState declared in state.js — used here by reference
 
 function toggleZombieCleanupMode() {
 const toggle = document.getElementById('zombieCleanupToggle');
@@ -1592,15 +1583,7 @@ zombieCleanupState.currentIndex = 0;
 // ============================================
 // DRAFT SELECTED FEATURE - v12.25.3
 // ============================================
-let draftSelectionState = {
-isActive: false,
-selectedDealIds: new Set(),  // Persists across filters
-isAutomating: false,
-shouldStop: false,
-currentIndex: 0,
-draftedDeals: [],  // Results for review popup
-totalToDraft: 0
-};
+// draftSelectionState declared in state.js — used here by reference
 
 function toggleDraftSelectionMode() {
 const toggle = document.getElementById('draftSelectionToggle');
@@ -2138,23 +2121,8 @@ async function loadTableFromCache() {
 }
 
 // --- AUTO REFRESH POLLING ---
-let lastUpdateTS = Date.now() / 1000;
-setInterval(() => {
-    // Only poll promotions if we're on Blaze tab AND not viewing Inventory
-    // AND not running zombie cleanup automation
-    const invContent = document.getElementById('blaze-inv-content');
-    const isInventoryVisible = invContent && invContent.style.display !== 'none';
-    const isZombieCleanupActive = zombieCleanupState && zombieCleanupState.isActive && !zombieCleanupState.isManualMode;
-    
-    if (currentMainTab === 'blaze' && !isInventoryVisible && !isZombieCleanupActive) {
-        apiGet(`/api/blaze/poll-update?ts=${lastUpdateTS}`)
-            .then(r => r.json())
-            .then(data => {
-                if (data.update) loadTableFromCache(); 
-            })
-            .catch(e => console.log("Poll error:", e));
-    }
-}, 2000);
+
+// lastUpdateTS and polling setInterval declared in blaze.js — used there by reference
 // Initialize
 window.addEventListener('load', function() {
     checkBrowserStatus();
@@ -2214,11 +2182,7 @@ function toggleFocus(type) {
 /* ==================================================================
    BLAZE DETAIL MODAL - Dual-State JavaScript (Hover + Pin)
    ================================================================== */
-let detailModalState = {
-isPinned: false,
-currentPromoId: null,
-hoverTimeout: null
-};
+// detailModalState declared in state.js — used here by reference
 
 function showDetailModal(row, isPinned = false) {
 const modal = document.getElementById('detailModal');
@@ -2731,8 +2695,7 @@ loadTaxRatesForEdit();
 });
 
 // v63: Tax Calculator JavaScript
-let TAX_RATES = {};
-let currentStore = '';
+// TAX_RATES and currentStore declared in state.js — used here by reference
 
 // Load tax rates on page load
 async function loadTaxRates() {

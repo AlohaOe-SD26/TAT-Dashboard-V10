@@ -179,6 +179,22 @@
         .price-check-toggle-switch input:checked + .price-check-toggle-slider { background-color: #0d6efd; }
         .price-check-toggle-switch input:checked + .price-check-toggle-slider:before { transform: translateX(20px); }
 
+        /* ── ONLY PRICE ERRORS TOGGLE ──────────────────────── */
+        .price-errors-toggle-container { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+        .price-errors-toggle-label { font-size: 0.8rem; font-weight: 600; color: #dc3545; white-space: nowrap; }
+        .price-errors-toggle-switch { position: relative; width: 40px; height: 20px; display: inline-block; }
+        .price-errors-toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .price-errors-toggle-slider {
+            position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #ccc; border-radius: 20px; transition: 0.3s;
+        }
+        .price-errors-toggle-slider:before {
+            position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px;
+            background-color: white; border-radius: 50%; transition: 0.3s;
+        }
+        .price-errors-toggle-switch input:checked + .price-errors-toggle-slider { background-color: #dc3545; }
+        .price-errors-toggle-switch input:checked + .price-errors-toggle-slider:before { transform: translateX(20px); }
+
         /* ── MISC ─────────────────────────────────────────── */
         #downloadFilteredBtn { display: none; }
     </style>
@@ -984,6 +1000,13 @@
                                     <span class="price-check-toggle-slider"></span>
                                 </label>
                             </div>
+                            <div class="price-errors-toggle-container">
+                                <span class="price-errors-toggle-label"><i class="bi bi-exclamation-triangle-fill"></i> Only Price Errors</span>
+                                <label class="price-errors-toggle-switch">
+                                    <input type="checkbox" id="priceErrorsOnlyToggle" onchange="onPriceErrorsOnlyChange()">
+                                    <span class="price-errors-toggle-slider"></span>
+                                </label>
+                            </div>
                             <div class="mt-2 d-flex gap-2 align-items-center">
                                 <div class="zombie-toggle-container">
                                     <span class="zombie-toggle-label"> Zombie</span>
@@ -1497,7 +1520,7 @@
             <div class="alert alert-info">
                 <i class="bi bi-info-circle"></i> 
                 Enter your <strong>email handle</strong> - the part before the @ symbol.
-                <br><span class="text-muted">Example: For john.doe@company.com, enter <code>john.doe</code></span>
+                <br><span class="text-muted">Example: For <a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="315b5e595f1f555e5471525e5c41505f481f525e5c">[email&#160;protected]</a>, enter <code>john.doe</code></span>
             </div>
             
             <div class="mb-3">
@@ -1689,7 +1712,7 @@
                     <div class="alert alert-info">
                         <strong><i class="bi bi-info-circle"></i> Multi-Account System</strong><br>
                         This tool supports multiple Google accounts. Each account uses an "email handle" (the part before @) as its identifier.
-                        <br>Example: For <code>john.doe@company.com</code>, the handle is <code>john.doe</code>
+                        <br>Example: For <code><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="94fefbfcfabaf0fbf1d4f7fbf9e4f5faedbaf7fbf9">[email&#160;protected]</a></code>, the handle is <code>john.doe</code>
                     </div>
 
                     <h5 class="text-primary mt-4 border-bottom pb-2"><i class="bi bi-cloud"></i> Step 1: Google Cloud Console Setup</h5>
@@ -1842,20 +1865,20 @@
 </div>    
 
     <!-- External JS -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://code.jquery.com/jquery-3.7.0.js"></script>
     <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
     <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
 
     <!-- App JS (load order: state → api → tabs → components) -->
-    <script src="/static/js/state.js"></script>
-    <script src="/static/js/api.js"></script>
-    <script src="/static/js/tabs/mis-matcher.js"></script>
-    <script src="/static/js/tabs/mis-updown.js"></script>
-    <script src="/static/js/tabs/mis-audit.js"></script>
-    <script src="/static/js/tabs/blaze.js"></script>
-    <script src="/static/js/components/preflight.js"></script>
-    <script src="/static/js/components/validation-banner.js"></script>
-    <script src="/static/js/components/datatables-init.js"></script>
-
+    <script src="/static/js/state.js?v=20260306"></script>
+    <script src="/static/js/api.js?v=20260306"></script>
+    <script src="/static/js/tabs/mis-matcher.js?v=20260306"></script>
+    <script src="/static/js/tabs/mis-updown.js?v=20260306"></script>
+    <script src="/static/js/tabs/mis-audit.js?v=20260306"></script>
+    <script src="/static/js/tabs/blaze.js?v=20260306"></script>
+    <script src="/static/js/components/datatables-init.js?v=20260306"></script>
+    <script src="/static/js/components/preflight.js?v=20260306"></script>
+    <script src="/static/js/components/validation-banner.js?v=20260306"></script>
+</body>
 </html>
