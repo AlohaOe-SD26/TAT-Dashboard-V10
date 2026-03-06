@@ -559,6 +559,7 @@ def validate_lookup():
         bmap       = session.get_mis_bracket_map()
         pmap       = session.get_mis_prefix_map()
         found_data = None
+        matching_rows = []
 
         if google_df is not None and not google_df.empty:
             for _, row in google_df.iterrows():
@@ -566,27 +567,50 @@ def validate_lookup():
                     if id_col in google_df.columns:
                         sheet_val = str(row.get(id_col, '')).strip()
                         if mis_id in sheet_val or sheet_val == mis_id:
-                            loc_raw, exc_raw = resolve_location_columns(row)
-                            found_data = {
-                                'brand':         str(get_col(row, ['[Brand]', 'Brand'], '', bmap, pmap)).strip(),
-                                'linked_brand':  str(get_col(row, ['Linked Brand'], '', bmap, pmap)).strip(),
-                                'weekday':       str(get_col(row, ['[Weekday]', 'Weekday', 'Day of Week'], '', bmap, pmap)).strip(),
-                                'categories':    str(get_col(row, ['[Category]', 'Categories'], '', bmap, pmap)).strip(),
-                                'discount':      str(get_col(row, ['[Daily Deal Discount]', 'Deal Discount Value/Type', 'Deal Discount'], '', bmap, pmap)).strip(),
-                                'vendor_contrib': str(get_col(row, ['[Discount paid by vendor]', 'Brand Contribution % (Credit)', 'Vendor Contribution'], '', bmap, pmap)).strip(),
-                                'locations':     format_location_display(loc_raw, exc_raw) if loc_raw else 'All Locations',
-                            }
+                            matching_rows.append(row)
                             break
-                if found_data:
-                    break
 
-        # Import inline to avoid circular — browser.py is in no-touch zone
-        from src.automation.browser import inject_mis_validation, send_validation_message
+        if matching_rows:
+            row = matching_rows[0]
+            loc_raw, exc_raw = resolve_location_columns(row)
+            is_retail    = str(get_col(row, ['Retail?', 'Retail'], '', bmap, pmap)).strip().upper() in ('TRUE', 'YES', '1')
+            is_wholesale = str(get_col(row, ['Wholesale?', 'Wholesale'], '', bmap, pmap)).strip().upper() in ('TRUE', 'YES', '1')
+            aw_raw       = str(get_col(row, ['Rebate After Wholesale', 'After Wholesale', 'After Wholesale Discount', 'Rebate after Wholesale?'], '', bmap, pmap)).strip()
+            if is_retail:
+                rebate_type = 'Retail'
+            elif is_wholesale:
+                rebate_type = 'Wholesale'
+            else:
+                rebate_type = str(get_col(row, ['[Rebate type]', 'Rebate type', 'Rebate Type'], '', bmap, pmap)).strip()
+            # Multi-day: collect all weekdays across every matching row
+            if len(matching_rows) > 1:
+                weekdays = [str(get_col(r, ['[Weekday]', 'Weekday', 'Day of Week'], '', bmap, pmap)).strip() for r in matching_rows]
+                combined_weekday = ', '.join(w for w in weekdays if w)
+            else:
+                combined_weekday = str(get_col(row, ['[Weekday]', 'Weekday', 'Day of Week'], '', bmap, pmap)).strip()
+            found_data = {
+                'brand':          str(get_col(row, ['[Brand]', 'Brand'], '', bmap, pmap)).strip(),
+                'linked_brand':   str(get_col(row, ['Linked Brand'], '', bmap, pmap)).strip(),
+                'weekday':        combined_weekday,
+                'categories':     str(get_col(row, ['[Category]', 'Categories'], '', bmap, pmap)).strip(),
+                'discount':       str(get_col(row, ['[Daily Deal Discount]', 'Deal Discount Value/Type', 'Deal Discount'], '', bmap, pmap)).strip(),
+                'vendor_contrib': str(get_col(row, ['[Discount paid by vendor]', 'Brand Contribution % (Credit)', 'Vendor Contribution'], '', bmap, pmap)).strip(),
+                'locations':      format_location_display(loc_raw, exc_raw) if loc_raw else 'All Locations',
+                'rebate_type':    rebate_type,
+                'after_wholesale': aw_raw.lower() in ('true', 'yes', '1'),
+            }
+            if len(matching_rows) > 1:
+                print(f"[V2-LOOKUP] Multi-day deal: {len(matching_rows)} rows, weekdays: {combined_weekday}")
+
+        # inject_mis_validation and send_validation_message live in src.api.blaze
+        from src.api.blaze import inject_mis_validation, inject_checklist_banner, send_validation_message
 
         if found_data:
+            # Inject the floating checklist banner (same as compare-to-sheet)
+            inject_checklist_banner(driver, found_data, mode='compare')
             send_validation_message(driver, action='automation', mis_id=mis_id, expected_data=found_data)
             return jsonify({'success': True, 'mode': 'automation',
-                            'message': f'MIS ID {mis_id} found — automation mode'})
+                            'message': f'MIS ID {mis_id} found — checklist active'})
         else:
             send_validation_message(driver, action='manual')
             return jsonify({'success': True, 'mode': 'manual',

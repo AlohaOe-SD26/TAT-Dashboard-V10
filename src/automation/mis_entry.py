@@ -726,7 +726,7 @@ def automate_full_create(driver: Any, payload: dict, session: Any = None) -> dic
 
     # Inject validation banner JS (non-fatal if it fails)
     try:
-        from src.automation.browser import inject_mis_validation, send_validation_message
+        from src.api.blaze import inject_mis_validation, send_validation_message
         expected = result.get('filled', {})
         send_validation_message(driver, action='automation', expected_data=expected)
         result['validation_injected'] = True
@@ -824,7 +824,7 @@ def automate_full_end_date(driver: Any, payload: dict, session: Any = None) -> d
         return result
 
     try:
-        from src.automation.browser import send_validation_message
+        from src.api.blaze import send_validation_message
         send_validation_message(driver, action='automation',
                                 expected_data={'end_date': payload.get('new_date', '')})
         result['validation_injected'] = True

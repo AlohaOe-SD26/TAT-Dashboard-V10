@@ -297,6 +297,9 @@ def inject_mis_validation(driver, expected_data=None, brand_aw_set=None) -> None
             removeAllRedBoxes();
             removeAllOrangeBoxes();
             removeSummaryBanner();
+            // Also remove the floating checklist banner (inject_checklist_banner)
+            const cb = document.getElementById('checklist-banner-v18');
+            if (cb) cb.remove();
         }}
 
         function getRebateTypeValue() {{
@@ -917,6 +920,131 @@ def inject_mis_validation(driver, expected_data=None, brand_aw_set=None) -> None
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def send_validation_message(driver, action: str = 'manual', mis_id: str | None = None, expected_data: dict | None = None) -> None:
+    """
+    V2: Send a message to the persistent validator already running in the browser
+    instead of re-injecting the full script.
+
+    Args:
+        driver:        Selenium WebDriver
+        action:        'manual' | 'automation' | 'lookup'
+        mis_id:        MIS ID string (optional)
+        expected_data: Expected-values dict (optional)
+
+    Monolith: send_validation_message(), line 26296.
+    """
+    import json as _json
+
+    message = {
+        'action':        action,
+        'mis_id':        mis_id,
+        'expected_data': expected_data,
+    }
+    message_json = _json.dumps(message)
+
+    print(f"[V2] 📤 Sending message: action={action}, has_data={expected_data is not None}")
+
+    try:
+        driver.execute_script(f"""
+            if (window.receiveValidationMessage) {{
+                window.receiveValidationMessage({message_json});
+            }} else {{
+                console.error('[V2] ERROR: Validator not initialized! Call inject_mis_validation first.');
+            }}
+        """)
+        print("[V2] ✅ Message sent successfully")
+    except Exception as e:
+        print(f"[V2] ❌ Failed to send message: {e}")
+
+
+
+def inject_mis_browser_click_listeners(driver) -> None:
+    """
+    V2: Inject always-on click listeners into the MIS Browser datatable.
+    Detects any click on an MIS ID cell or Edit button and fires
+    /api/mis/validate-lookup so the checklist banner appears automatically
+    without the user needing to use the Compare to Google Sheet button first.
+
+    Guards against double-injection via window.MIS_BROWSER_LISTENERS_ACTIVE.
+    Monolith: inject_mis_browser_click_listeners(), line 26330.
+    """
+    print("[V2] Injecting MIS Browser click listeners...")
+
+    listener_js = """
+    (function() {
+        if (window.MIS_BROWSER_LISTENERS_ACTIVE) {
+            console.log('[V2] MIS Browser listeners already active');
+            return;
+        }
+        window.MIS_BROWSER_LISTENERS_ACTIVE = true;
+
+        console.log('[V2] Setting up MIS Browser click detection');
+
+        window.sendMISLookupRequest = async function(misId) {
+            console.log('[V2] Sending lookup request for MIS ID:', misId);
+            try {
+                const response = await fetch('/api/mis/validate-lookup', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ mis_id: misId })
+                });
+                const result = await response.json();
+                console.log('[V2] Lookup response:', result);
+            } catch (e) {
+                console.error('[V2] Lookup request failed:', e);
+            }
+        };
+
+        function attachListeners() {
+            const table = document.querySelector(
+                '#daily-discount-table, #mis-datatable, .dataTable, table.table, #DataTables_Table_0'
+            );
+            if (!table) {
+                console.log('[V2] MIS datatable not found, will retry');
+                return false;
+            }
+            console.log('[V2] Found MIS datatable, attaching listeners');
+
+            table.addEventListener('click', function(e) {
+                const row = e.target.closest('tr');
+                if (!row) return;
+
+                // Extract MIS ID from the row first — only proceed if we find one.
+                // Search target element + all td/a/span in the row (same as Compare button).
+                let misId = row.dataset.misId || row.dataset.id || null;
+                if (!misId) {
+                    const els = [e.target, ...row.querySelectorAll('td,a,span')];
+                    for (const el of els) {
+                        const text = el.textContent.trim();
+                        if (/^\\d{3,}$/.test(text)) { misId = text; break; }
+                    }
+                }
+                if (!misId) return;
+
+                console.log('[V2] MIS Browser row click — MIS ID:', misId);
+                // Small delay so the MIS app can begin opening its modal before we inject.
+                setTimeout(() => window.sendMISLookupRequest(misId), 600);
+            });
+            return true;
+        }
+
+        if (!attachListeners()) {
+            setTimeout(() => {
+                if (!attachListeners()) {
+                    console.log('[V2] Could not find MIS datatable after retry');
+                }
+            }, 2000);
+        }
+    })();
+    """
+
+    try:
+        driver.execute_script(listener_js)
+        print("[V2] ✅ MIS Browser click listeners injected")
+    except Exception as e:
+        print(f"[V2] ❌ Failed to inject click listeners: {e}")
+
+
 def inject_checklist_banner(driver, expected_data: dict, mode: str = 'create') -> None:
     """
     v12.19: Inject floating Checklist Banner into the MIS browser window.
@@ -1274,15 +1402,25 @@ def inject_checklist_banner(driver, expected_data: dict, mode: str = 'create') -
         }}
 
         // ── Poll every 500ms ──────────────────────────────────────────────────
-        validateAllFields();
-        interceptSaveButton();
+        // Stabilization delay: wait 1.2 s before first run so Select2 dropdowns
+        // have time to finish rendering after the modal opens (fixes flicker).
+        setTimeout(() => {{
+            validateAllFields();
+            interceptSaveButton();
+        }}, 1200);
 
-        // Auto-dismiss after 10 minutes or when banner is manually closed.
-        // Do NOT auto-dismiss based on modal selectors — the MIS system does not
-        // use Bootstrap .modal.show classes, so that check always fires false and
-        // destroys the banner 500ms after injection.
+        // Auto-dismiss when modal closes. Detect via .modal-content .modal-title
+        // (same selector used by inject_mis_validation's isModalOpen) because
+        // MIS does not use Bootstrap .modal.show classes.
         const validationInterval = setInterval(() => {{
             if (!document.getElementById('checklist-banner-v18')) {{
+                clearInterval(validationInterval); return;
+            }}
+            const _mt = document.querySelector('.modal-content .modal-title');
+            const _tt = _mt ? (_mt.textContent || '') : '';
+            const modalStillOpen = !!_mt && (_tt.includes('Daily Discount') || _tt.includes('Discount') || _tt.trim() !== '');
+            if (!modalStillOpen) {{
+                document.getElementById('checklist-banner-v18')?.remove();
                 clearInterval(validationInterval); return;
             }}
             validateAllFields();
@@ -3043,6 +3181,14 @@ def background_validation_monitor():
                     # Inject validation in manual mode (no expected data)
                     inject_mis_validation(driver, expected_data=None)
                     print("[VALIDATION-MONITOR] ✅ Injected manual validation (was missing)")
+
+                # Also inject click listeners if not already active
+                listeners_active = driver.execute_script(
+                    "return window.MIS_BROWSER_LISTENERS_ACTIVE || false;"
+                )
+                if not listeners_active:
+                    inject_mis_browser_click_listeners(driver)
+                    print("[VALIDATION-MONITOR] ✅ Injected MIS Browser click listeners")
                     
             except Exception:
                 # Silently skip on any error (don't crash the monitor)
