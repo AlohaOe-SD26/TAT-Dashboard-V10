@@ -27,6 +27,7 @@ body {
     display: flex;
     background: #f8f9fa;
     border-bottom: 2px solid #dee2e6;
+    color: #212529;
 }
 .main-nav-btn {
     flex: 1;
@@ -37,7 +38,7 @@ body {
     font-weight: 700;
     cursor: pointer;
     transition: all 0.3s;
-    color: #495057;
+    color: #212529;
 }
 .main-nav-btn:hover { background: #e9ecef; }
 .main-nav-btn.active {
@@ -51,6 +52,7 @@ body {
     background: #ffffff;
     border-bottom: 1px solid #dee2e6;
     padding: 10px 20px;
+    color: #212529;
 }
 .sub-nav.active { display: flex; }
 .sub-nav-btn {
@@ -61,7 +63,7 @@ body {
     font-weight: 600;
     cursor: pointer;
     transition: all 0.3s;
-    color: #6c757d;
+    color: #212529;
     border-radius: 8px;
     margin-right: 5px;
 }
@@ -90,7 +92,7 @@ body {
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;
-    color: #495057;
+    color: #212529;
 }
 .deal-type-btn:hover {
     background: #e9ecef;
@@ -116,6 +118,22 @@ body {
 .content {
     padding: 40px;
     min-height: 500px;
+    color: #212529;  /* reset: body inherits dark-theme #e0e0e0; white panels need black text */
+}
+
+/* ── White-surface color resets ─────────────────────────────────────────────
+ * body color: #e0e0e0 (dark theme) bleeds into all white/light panels.
+ * Every surface with a white or light background needs an explicit reset.   */
+.card, .card-body, .card-header,
+.modal-content, .modal-body, .modal-header,
+.config-section,
+.focus-panel,
+.draft-modal, .zombie-modal,
+#calcModal .calc-content,
+#detailModal,
+.tooltip-container,
+.brand-popup {
+    color: #212529;
 }
 
 .main-section { display: none; }
@@ -161,7 +179,7 @@ body {
     display: block;
     font-weight: 600;
     margin-bottom: 8px;
-    color: #495057;
+    color: #212529;
 }
 .input-group input, .input-group select {
     width: 100%;
@@ -217,7 +235,7 @@ body {
 }
 .debug-messages .log-entry {
     margin-bottom: 2px;
-    color: #495057;
+    color: #212529;
 }
 .debug-messages .log-entry.success {
     color: #28a745;
@@ -354,7 +372,7 @@ tr:hover { background: #f8f9fa; }
 .brand-single {
     cursor: pointer;
     text-decoration: underline;
-    color: #495057;
+    color: #212529;
 }
 .brand-single:hover { color: #667eea; }
 
@@ -590,6 +608,7 @@ input[type="search"]:focus {
     font-weight: 600;
     padding: 12px 8px;
     text-align: left;
+    color: #212529;
     position: sticky;
     top: 0;
 }
@@ -870,7 +889,7 @@ tr.group-member-row td {
     font-weight: bold;
     display: block;
     margin-bottom: 8px;
-    color: #495057;
+    color: #212529;
 }
 
 #calcModal .store-selector select {
@@ -888,7 +907,7 @@ tr.group-member-row td {
     border-left: 4px solid #667eea;
     border-radius: 4px;
     font-weight: bold;
-    color: #495057;
+    color: #212529;
 }
 
 #calcModal .calc-section {
@@ -901,7 +920,7 @@ tr.group-member-row td {
 
 #calcModal .calc-section h3 {
     margin: 0 0 15px 0;
-    color: #495057;
+    color: #212529;
     font-size: 1.2em;
     padding-bottom: 8px;
     border-bottom: 1px solid #dee2e6;
@@ -917,7 +936,7 @@ tr.group-member-row td {
 #calcModal .calc-row label {
     flex: 0 0 140px;
     font-weight: 600;
-    color: #6c757d;
+    color: #212529;
 }
 
 #calcModal .calc-row input {
@@ -968,7 +987,7 @@ tr.group-member-row td {
 .filter-label {
     font-weight: 600;
     font-size: 0.9rem;
-    color: #495057;
+    color: #212529;
     margin-bottom: 5px;
 }
 
@@ -1202,7 +1221,7 @@ tr.group-member-row td {
     text-align: center;
     margin-top: 10px;
     font-weight: 500;
-    color: #495057;
+    color: #212529;
 }
 .draft-review-table {
     max-height: 400px;
@@ -1221,7 +1240,7 @@ tr.group-member-row td {
 .zombie-toggle-label {
     font-size: 0.8rem;
     font-weight: 600;
-    color: #495057;
+    color: #212529;
     white-space: nowrap;
 }
 
@@ -1314,7 +1333,7 @@ tr.group-member-row td {
 }
 
 .zombie-modal p {
-    color: #495057;
+    color: #212529;
     line-height: 1.6;
     margin-bottom: 20px;
 }
@@ -1356,7 +1375,7 @@ tr.group-member-row td {
 
 .zombie-progress-text {
     font-size: 0.85rem;
-    color: #6c757d;
+    color: #212529;
     text-align: center;
 }
 
@@ -1365,3 +1384,16 @@ tr.group-member-row td {
     display: none;
 }
 </style>
+/* ── Light-background .text-muted override ─────────────────────────────────
+ * Bootstrap .text-muted renders #6c757d which is unreadable on white panels.
+ * Override for any .text-muted inside a white or light-bg container.         */
+.container-main .text-muted,
+.config-section .text-muted,
+.content .text-muted,
+.card .text-muted,
+.modal-body .text-muted,
+.bg-light .text-muted,
+.draft-modal .text-muted,
+.zombie-modal .text-muted {
+    color: #212529 !important;
+}

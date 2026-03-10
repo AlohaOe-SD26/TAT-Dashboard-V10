@@ -2967,13 +2967,11 @@ btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Syncing.
 statusDiv.innerHTML = '<span style="color: #0d6efd;">ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â³ Authenticating...</span>';
 
 try {
-    const response = await api.blaze.ecomSync({ 
+    const data = await api.blaze.ecomSync({
             store: selectedStore,
             email: blazeEmail,
             password: blazePassword
         });
-    
-    const data = await response.json();
     
     if (data.success) {
         statusDiv.innerHTML = `<span style="color: #198754;">ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ ${data.message || 'Sync Complete'}</span>`;

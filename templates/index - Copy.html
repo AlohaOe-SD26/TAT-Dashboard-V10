@@ -36,7 +36,7 @@
             padding-bottom: 15px; margin-bottom: 20px; position: relative;
         }
         #detailModal .modal-title { font-size: 1.5rem; font-weight: bold; color: white; margin-bottom: 5px; }
-        #detailModal .modal-id   { font-size: 0.9rem; color: #212529; margin-bottom: 5px; }
+        #detailModal .modal-id   { font-size: 0.9rem; color: #aaa; margin-bottom: 5px; }
         #detailModal .modal-type { font-size: 1rem; color: #66aaff; font-weight: bold; }
         #detailModal .close-btn {
             position: absolute; top: 0; right: 0;
@@ -52,7 +52,7 @@
             padding-bottom: 5px; border-bottom: 1px solid #444;
         }
         #detailModal .data-row   { margin-bottom: 8px; padding-left: 10px; color: white; }
-        #detailModal .data-label { font-weight: bold; color: #212529; }
+        #detailModal .data-label { font-weight: bold; color: #ccc; }
         #detailModal .data-value { color: white; }
 
         /* ── SPIN ANIMATION ───────────────────────────────── */
@@ -65,7 +65,7 @@
             padding: 4px 8px; background: #f8f9fa;
             border-radius: 6px; border: 1px solid #dee2e6;
         }
-        .zombie-toggle-label { font-size: 0.8rem; font-weight: 600; color: #212529; white-space: nowrap; }
+        .zombie-toggle-label { font-size: 0.8rem; font-weight: 600; color: #495057; white-space: nowrap; }
         .zombie-toggle-switch { position: relative; width: 40px; height: 20px; }
         .zombie-toggle-switch input { opacity: 0; width: 0; height: 0; }
         .zombie-toggle-slider {
@@ -96,7 +96,7 @@
             box-shadow: 0 10px 40px rgba(0,0,0,0.3);
         }
         .zombie-modal h3 { margin: 0 0 15px 0; color: #dc3545; display: flex; align-items: center; gap: 10px; }
-        .zombie-modal p  { color: #212529; line-height: 1.6; margin-bottom: 20px; }
+        .zombie-modal p  { color: #495057; line-height: 1.6; margin-bottom: 20px; }
         .zombie-modal .btn-group-vertical { display: flex; flex-direction: column; gap: 10px; }
         .zombie-modal .btn { padding: 12px 20px; font-weight: 600; border-radius: 8px; }
         .zombie-progress-container {
@@ -104,7 +104,7 @@
         }
         .zombie-progress-bar { height: 8px; background: #e9ecef; border-radius: 4px; overflow: hidden; margin-bottom: 10px; }
         .zombie-progress-fill { height: 100%; background: linear-gradient(90deg, #dc3545, #fd7e14); width: 0%; transition: width 0.3s ease; }
-        .zombie-progress-text { font-size: 0.85rem; color: #212529; text-align: center; }
+        .zombie-progress-text { font-size: 0.85rem; color: #6c757d; text-align: center; }
 
         /* ── DRAFT TOGGLE ─────────────────────────────────── */
         .draft-toggle-container { display: flex; align-items: center; gap: 6px; }
@@ -144,12 +144,12 @@
         .draft-progress-container { display: none; margin-top: 20px; }
         .draft-progress-bar  { height: 24px; background: #e9ecef; border-radius: 12px; overflow: hidden; }
         .draft-progress-fill { height: 100%; background: linear-gradient(90deg, #fd7e14, #ffc107); width: 0%; transition: width 0.3s ease; }
-        .draft-progress-text { text-align: center; margin-top: 10px; font-weight: 500; color: #212529; }
+        .draft-progress-text { text-align: center; margin-top: 10px; font-weight: 500; color: #495057; }
         .draft-review-table  { max-height: 400px; overflow-y: auto; }
 
         /* ── HIDE INACTIVE TOGGLE ──────────────────────────── */
         .inactive-toggle-container { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
-        .inactive-toggle-label { font-size: 0.8rem; font-weight: 600; color: #212529; white-space: nowrap; }
+        .inactive-toggle-label { font-size: 0.8rem; font-weight: 600; color: #6c757d; white-space: nowrap; }
         .inactive-toggle-switch { position: relative; width: 40px; height: 20px; display: inline-block; }
         .inactive-toggle-switch input { opacity: 0; width: 0; height: 0; }
         .inactive-toggle-slider {
@@ -390,7 +390,7 @@
                                     <i class="bi bi-cloud-upload"></i> SYNC TO TYMBER
                                 </button>
                             </div>
-                            <div id="ecom-sync-status" class="small mt-1" style="min-height: 18px; font-size: 0.75em; color: #212529;">Ready</div>
+                            <div id="ecom-sync-status" class="small mt-1" style="min-height: 18px; font-size: 0.75em; color: #6c757d;">Ready</div>
                         </div>
                     </div>
                 </div>
@@ -895,7 +895,7 @@
                             <tr>
                                 <th>Row</th>
                                 <th>Brand</th>
-                                <th style="color:#212529;">Linked</th>
+                                <th style="color:#6c757d;">Linked</th>
                                 <th>Weekday</th>
                                 <th>Notes</th>
                                 <th>Deal Info</th>
@@ -1399,7 +1399,7 @@
     </div>
 
     <div style="background: #e9ecef; padding: 10px; border-radius: 8px; margin-bottom: 20px;">
-        <label for="calcTypeSelect" style="font-weight:bold; display:block; margin-bottom:5px; color:#212529;">Select Tool:</label>
+        <label for="calcTypeSelect" style="font-weight:bold; display:block; margin-bottom:5px; color:#495057;">Select Tool:</label>
         <select id="calcTypeSelect" class="form-select" onchange="switchCalculator()" style="width:100%; padding:8px; border-radius:4px; border:1px solid #ced4da;">
             <option value="postTax"> Post-Tax Calculator</option>
             <option value="preTax"> Pre-Tax Calculator</option>
@@ -1411,7 +1411,7 @@
     
     <div id="calc-postTax" class="calc-section">
         <h3> Post-Tax Calculator</h3>
-        <p style="color: #212529; font-size: 0.9em; margin-bottom: 10px;">Calculate after-tax price from discount value</p>
+        <p style="color: #6c757d; font-size: 0.9em; margin-bottom: 10px;">Calculate after-tax price from discount value</p>
         <div class="calc-row">
             <label>Discount Value:</label>
             <input type="number" id="postTaxInput" step="0.01" placeholder="e.g., 10.00" oninput="calculatePostTax()">
@@ -1424,7 +1424,7 @@
     
     <div id="calc-preTax" class="calc-section" style="display:none;">
         <h3> Pre-Tax Calculator</h3>
-        <p style="color: #212529; font-size: 0.9em; margin-bottom: 10px;">Calculate discount value from after-tax price</p>
+        <p style="color: #6c757d; font-size: 0.9em; margin-bottom: 10px;">Calculate discount value from after-tax price</p>
         <div class="calc-row">
             <label>After-Tax Price:</label>
             <input type="number" id="preTaxInput" step="0.01" placeholder="e.g., 10.98" oninput="calculatePreTax()">
@@ -1437,7 +1437,7 @@
     
     <div id="calc-percent" class="calc-section" style="display:none;">
         <h3> Percentage Calculator</h3>
-        <p style="color: #212529; font-size: 0.9em; margin-bottom: 10px;">Calculate percentage from base and result</p>
+        <p style="color: #6c757d; font-size: 0.9em; margin-bottom: 10px;">Calculate percentage from base and result</p>
         <div class="calc-row">
             <label>Base Amount:</label>
             <input type="number" id="percBaseInput" step="0.01" placeholder="e.g., 50.00" oninput="calculatePercentage()">
@@ -1454,7 +1454,7 @@
     
     <div id="calc-rebate" class="calc-section" style="display:none;">
         <h3> Vendor Rebate Calculator</h3>
-        <p style="color: #212529; font-size: 0.9em; margin-bottom: 10px;">Calculate vendor contribution from discount and rebate percentage</p>
+        <p style="color: #6c757d; font-size: 0.9em; margin-bottom: 10px;">Calculate vendor contribution from discount and rebate percentage</p>
         <div class="calc-row">
             <label>Discount Value:</label>
             <input type="number" id="vendorDiscountInput" step="0.01" placeholder="e.g., 10.00" oninput="calculateVendorRebate()">
@@ -1471,7 +1471,7 @@
 
     <div id="calc-reprice" class="calc-section" style="display:none;">
         <h3>[!] ⚠️⚠️ Reprice / Stack Fixer</h3>
-        <p style="color: #212529; font-size: 0.9em; margin-bottom: 10px;">
+        <p style="color: #6c757d; font-size: 0.9em; margin-bottom: 10px;">
             Calculate required flat discount to bridge the gap between current price and desired % off. (Example: Is 45% Off but needs to be 50% Off)<br>
             <strong>(PRE-TAX VALUES ONLY)</strong>
         </p>
